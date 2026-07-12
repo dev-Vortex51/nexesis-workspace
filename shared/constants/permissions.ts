@@ -17,8 +17,11 @@ import { USER_ROLES } from "../schemas/auth";
  *
  * Note on "super-admin": the API spec labels the institution-management
  * endpoints "super-admin only", but no super-admin value exists in the
- * User.role enum. Those permissions are therefore granted to `admin`, the
- * highest role the data model defines; no new role is introduced.
+ * User.role enum. Rather than widen these to `admin` — which would let any
+ * institutional admin manage the global institution registry — the
+ * corresponding permissions are granted to NO role and therefore fail closed:
+ * `requirePermission` rejects everyone until a dedicated system role is
+ * introduced. No new role is invented here.
  */
 
 export type UserRole = (typeof USER_ROLES)[number];
@@ -37,7 +40,9 @@ export const PERMISSIONS = {
   USER_SUSPEND: "user:suspend", // DELETE /users/:id — admin only
   USER_ASSIGN_SUPERVISOR: "user:assign-supervisor", // POST /users/:id/assign-supervisor — coordinator/admin
 
-  // Institutions (spec: "super-admin only" → admin)
+  // Institutions (spec: "super-admin only"). No User.role value maps to
+  // super-admin, so these are granted to NO role and fail closed until a
+  // dedicated system role exists — see the file header.
   INSTITUTION_LIST: "institution:list", // GET /institutions
   INSTITUTION_CREATE: "institution:create", // POST /institutions
 
@@ -118,8 +123,9 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     P.USER_UPDATE_ANY,
     P.USER_SUSPEND,
     P.USER_ASSIGN_SUPERVISOR,
-    P.INSTITUTION_LIST,
-    P.INSTITUTION_CREATE,
+    // INSTITUTION_LIST / INSTITUTION_CREATE are intentionally NOT granted:
+    // the spec restricts them to "super-admin", a role the data model does not
+    // define, so they fail closed (see file header).
     P.DEPARTMENT_CREATE,
     P.SESSION_CREATE,
     P.PROJECT_CREATE,

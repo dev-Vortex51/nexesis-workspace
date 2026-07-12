@@ -67,8 +67,11 @@ export type OwnerResolver = (req: Request) => Promise<string | null>;
  * (the administrative override the spec expresses as "author or admin", "admin
  * or self", etc.).
  *
- * Responds 401 if unauthenticated, 404 if the resource/owner cannot be
- * resolved, and 403 if the user is neither the owner nor a permitted override.
+ * Responds 401 if unauthenticated and 403 if the user is neither the owner
+ * nor a permitted override. A resolver that returns `null` (resource absent /
+ * no owner) yields 404; an unexpected resolver exception is forwarded to the
+ * application's error handler (→ 500) rather than being masked as a 404, so
+ * operational failures are not hidden as missing resources.
  */
 export function requireOwnership(
   resolveOwnerId: OwnerResolver,
@@ -94,8 +97,12 @@ export function requireOwnership(
     try {
       ownerId = await resolveOwnerId(req);
     } catch (error) {
+      // Only a deliberate null result means "not found". An exception is an
+      // unexpected server failure (connection error, bad query, resolver bug)
+      // — log it and hand it to the standard error handler as a 5xx rather
+      // than converting every failure into a misleading 404.
       console.error("Ownership resolution failed:", error);
-      sendError(res, 404, "NOT_FOUND", "Resource not found");
+      next(error);
       return;
     }
 
@@ -117,8 +124,9 @@ export function requireOwnership(
  * Guard that enforces tenant isolation: the resource's institution must match
  * the authenticated user's institution. `resolveInstitutionId` returns the
  * institution the request targets (from a param, body, or a lookup). Responds
- * 401 if unauthenticated, 404 if the institution cannot be resolved, and 403
- * on a cross-institution attempt.
+ * 401 if unauthenticated and 403 on a cross-institution attempt. A resolver
+ * that returns `null` yields 404; an unexpected resolver exception is forwarded
+ * to the application's error handler (→ 500) rather than masked as a 404.
  */
 export function requireSameInstitution(
   resolveInstitutionId: (req: Request) => Promise<string | null> | string | null,
@@ -137,8 +145,9 @@ export function requireSameInstitution(
     try {
       institutionId = await resolveInstitutionId(req);
     } catch (error) {
+      // See requireOwnership: an exception is a server failure, not a 404.
       console.error("Institution resolution failed:", error);
-      sendError(res, 404, "NOT_FOUND", "Resource not found");
+      next(error);
       return;
     }
 

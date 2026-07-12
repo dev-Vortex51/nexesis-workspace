@@ -7,6 +7,7 @@ import { requireAuth } from "../../server/middleware/auth";
 import {
   requirePermission,
   requireOwnership,
+  requireSameInstitution,
 } from "../../server/middleware/rbac";
 import { PERMISSIONS } from "../../shared/constants/permissions";
 import { USER_ROLES } from "../../shared/schemas/auth";
@@ -20,7 +21,7 @@ import { USER_ROLES } from "../../shared/schemas/auth";
  * cookie for each of the six User.role values. This proves the permission
  * matrix and the guards enforce authorization exactly as the API spec
  * annotates it (admin-only, coordinator/admin, supervisor-only, student-only,
- * and "owner or admin").
+ * "owner or admin", and cross-institution tenant isolation).
  *
  * Skips automatically when Postgres is unreachable so unit runs stay green in
  * environments without a database (same pattern as the auth integration test).
@@ -45,6 +46,8 @@ const stamp = Date.now();
 const cookies: Record<string, string> = {};
 const seededUserIds: string[] = [];
 let institutionId: string;
+// A second institution used to prove cross-institution isolation.
+let otherInstitutionId: string;
 
 /** Build the probe app: real requireAuth + RBAC guards on throwaway routes. */
 function createTestApp() {
@@ -95,6 +98,24 @@ function createTestApp() {
       async (req) => (req.params as { ownerId?: string }).ownerId ?? null,
       PERMISSIONS.FEEDBACK_DELETE_ANY,
     ),
+    ok,
+  );
+
+  // tenant isolation — the request targets the institution in :institutionId.
+  app.get(
+    "/probe/institution/:institutionId",
+    requireAuth,
+    requireSameInstitution(
+      (req) => (req.params as { institutionId?: string }).institutionId ?? null,
+    ),
+    ok,
+  );
+
+  // tenant isolation, unresolved target — resolver returns null → 404.
+  app.get(
+    "/probe/institution-missing",
+    requireAuth,
+    requireSameInstitution(() => null),
     ok,
   );
 
@@ -157,6 +178,18 @@ beforeAll(async () => {
   });
   institutionId = institution.id;
 
+  // A second institution — no users needed; it only serves as a distinct
+  // institution id that the seeded users do NOT belong to.
+  const otherInstitution = await prisma.institution.create({
+    data: {
+      name: "RBAC Institution B",
+      slug: `rbac-b-${stamp}`,
+      settings: {},
+      subscriptionTier: "free",
+    },
+  });
+  otherInstitutionId = otherInstitution.id;
+
   // Seed one user per role.
   for (const role of USER_ROLES) {
     seededUserIds.push(await seedUser(role));
@@ -193,7 +226,9 @@ afterAll(async () => {
   await prisma.session.deleteMany({ where: { userId: { in: seededUserIds } } });
   await prisma.account.deleteMany({ where: { userId: { in: seededUserIds } } });
   await prisma.user.deleteMany({ where: { id: { in: seededUserIds } } });
-  await prisma.institution.deleteMany({ where: { id: institutionId } });
+  await prisma.institution.deleteMany({
+    where: { id: { in: [institutionId, otherInstitutionId] } },
+  });
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
 
@@ -342,4 +377,52 @@ describe("RBAC middleware — requireOwnership (feedback: author or admin)", () 
       expect(status).toBe(200);
     },
   );
+});
+
+describe("RBAC middleware — requireSameInstitution (tenant isolation)", () => {
+  it.runIf(dbAvailable)(
+    "allows access to a resource in the user's own institution (200)",
+    async () => {
+      const { status } = await req(
+        "GET",
+        `/probe/institution/${institutionId}`,
+        cookies.admin,
+      );
+      expect(status).toBe(200);
+    },
+  );
+
+  it.runIf(dbAvailable)(
+    "forbids access to a resource in another institution (403)",
+    async () => {
+      const { status, json } = await req(
+        "GET",
+        `/probe/institution/${otherInstitutionId}`,
+        cookies.admin,
+      );
+      expect(status).toBe(403);
+      expect(json.error.code).toBe("FORBIDDEN");
+    },
+  );
+
+  it.runIf(dbAvailable)(
+    "returns 404 when the target institution cannot be resolved",
+    async () => {
+      const { status, json } = await req(
+        "GET",
+        "/probe/institution-missing",
+        cookies.admin,
+      );
+      expect(status).toBe(404);
+      expect(json.error.code).toBe("NOT_FOUND");
+    },
+  );
+
+  it.runIf(dbAvailable)("rejects an unauthenticated request (401)", async () => {
+    const { status } = await req(
+      "GET",
+      `/probe/institution/${institutionId}`,
+    );
+    expect(status).toBe(401);
+  });
 });
