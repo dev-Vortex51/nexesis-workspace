@@ -37,7 +37,7 @@ Backend unit is complete when:
 ## Phase 0: Foundation (Backend)
 
 - [x] 0.1 Project Scaffolding
-- [ ] 0.2 Database Setup
+- [x] 0.2 Database Setup
 - [ ] 0.3 Auth Foundation
 - [ ] 0.4 RBAC Middleware
 - [ ] 0.5 API Client Setup
