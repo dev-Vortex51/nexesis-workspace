@@ -152,33 +152,33 @@ enum ReportStatus {
 }
 
 model Institution {
-  id               String                 @id @default(uuid()) @db.Uuid
+  id               String           @id @default(uuid()) @db.Uuid
   name             String
-  slug             String                 @unique
+  slug             String           @unique
   logoUrl          String?
   settings         Json
   subscriptionTier SubscriptionTier
-  createdAt        DateTime               @default(now())
-  updatedAt        DateTime               @updatedAt
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
 
-  departments      Department[]
-  sessions         AcademicSession[]
-  users            User[]
-  projects         Project[]
-  rubrics          Rubric[]
-  announcements    Announcement[]
-  auditLogs        AuditLog[]
-  reports          Report[]
+  departments   Department[]
+  sessions      AcademicSession[]
+  users         User[]
+  projects      Project[]
+  rubrics       Rubric[]
+  announcements Announcement[]
+  auditLogs     AuditLog[]
+  reports       Report[]
 }
 
 model Department {
-  id            String        @id @default(uuid()) @db.Uuid
-  institutionId String        @db.Uuid
+  id            String   @id @default(uuid()) @db.Uuid
+  institutionId String   @db.Uuid
   name          String
   code          String
-  createdAt     DateTime      @default(now())
+  createdAt     DateTime @default(now())
 
-  institution   Institution   @relation(fields: [institutionId], references: [id])
+  institution   Institution    @relation(fields: [institutionId], references: [id])
   users         User[]
   projects      Project[]
   rubrics       Rubric[]
@@ -195,7 +195,7 @@ model AcademicSession {
   settings      Json
   createdAt     DateTime              @default(now())
 
-  institution   Institution           @relation(fields: [institutionId], references: [id])
+  institution   Institution    @relation(fields: [institutionId], references: [id])
   projects      Project[]
   announcements Announcement[]
 
@@ -203,75 +203,84 @@ model AcademicSession {
 }
 
 model User {
-  id             String          @id @default(uuid()) @db.Uuid
-  institutionId  String          @db.Uuid
-  departmentId   String?         @db.Uuid
-  email          String          @unique
-  passwordHash   String
-  firstName      String
-  lastName       String
-  role           UserRole
-  mfaEnabled     Boolean         @default(false)
-  mfaSecret      String?
-  status         UserStatus
-  lastLoginAt    DateTime?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  id            String     @id @default(uuid()) @db.Uuid
+  institutionId String     @db.Uuid
+  departmentId  String?    @db.Uuid
+  email         String     @unique
+  // Credentials are stored by Better Auth in the Account table (providerId
+  // "credential"), not here. `name` / `emailVerified` / `image` are required by
+  // Better Auth's core user model; the remaining fields are domain-specific and
+  // exposed to Better Auth via `user.additionalFields` in server/auth.ts.
+  name          String
+  emailVerified Boolean    @default(false)
+  image         String?
+  firstName     String
+  lastName      String
+  role          UserRole
+  mfaEnabled    Boolean    @default(false)
+  mfaSecret     String?
+  status        UserStatus @default(active)
+  lastLoginAt   DateTime?
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
 
-  institution    Institution     @relation(fields: [institutionId], references: [id])
-  department     Department?     @relation(fields: [departmentId], references: [id])
+  institution Institution @relation(fields: [institutionId], references: [id])
+  department  Department? @relation(fields: [departmentId], references: [id])
 
-  studentProjects               Project[]             @relation("ProjectStudent")
-  projectMemberships            ProjectMember[]
-  uploadedDocuments             Document[]            @relation("DocumentUploader")
-  feedbackAuthored              Feedback[]            @relation("FeedbackAuthor")
-  scheduledMeetings             Meeting[]             @relation("MeetingScheduler")
-  meetingAttendances            MeetingAttendance[]
-  meetingNotesAuthored          MeetingNote[]         @relation("MeetingNoteAuthor")
-  gradesAssessed                Grade[]               @relation("GradeAssessor")
-  gradesApproved                Grade[]               @relation("GradeApprover")
-  messagesSent                  Message[]             @relation("MessageSender")
-  announcementsAuthored         Announcement[]        @relation("AnnouncementAuthor")
-  notifications                 Notification[]
-  auditLogs                     AuditLog[]
-  reportsGenerated              Report[]              @relation("ReportGenerator")
+  sessions Session[]
+  accounts Account[]
+
+  studentProjects       Project[]           @relation("ProjectStudent")
+  projectMemberships    ProjectMember[]
+  uploadedDocuments     Document[]          @relation("DocumentUploader")
+  feedbackAuthored      Feedback[]          @relation("FeedbackAuthor")
+  scheduledMeetings     Meeting[]           @relation("MeetingScheduler")
+  meetingAttendances    MeetingAttendance[]
+  meetingNotesAuthored  MeetingNote[]       @relation("MeetingNoteAuthor")
+  gradesAssessed        Grade[]             @relation("GradeAssessor")
+  gradesApproved        Grade[]             @relation("GradeApprover")
+  messagesSent          Message[]           @relation("MessageSender")
+  announcementsAuthored Announcement[]      @relation("AnnouncementAuthor")
+  notifications         Notification[]
+  auditLogs             AuditLog[]
+  reportsGenerated      Report[]            @relation("ReportGenerator")
 
   @@index([institutionId, role])
 }
 
 model Project {
-  id            String         @id @default(uuid()) @db.Uuid
-  institutionId String         @db.Uuid
-  departmentId  String         @db.Uuid
-  sessionId     String         @db.Uuid
-  studentId     String         @db.Uuid
+  id            String        @id @default(uuid()) @db.Uuid
+  institutionId String        @db.Uuid
+  departmentId  String        @db.Uuid
+  sessionId     String        @db.Uuid
+  studentId     String        @db.Uuid
   title         String?
   description   String?
   currentStage  WorkflowStage
   stageStatus   StageStatus
   progress      Int
   deadline      DateTime?
-  createdAt     DateTime       @default(now())
-  updatedAt     DateTime       @updatedAt
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
   completedAt   DateTime?
   archivedAt    DateTime?
 
-  institution   Institution    @relation(fields: [institutionId], references: [id])
-  department    Department     @relation(fields: [departmentId], references: [id])
-  session       AcademicSession @relation(fields: [sessionId], references: [id])
-  student       User           @relation("ProjectStudent", fields: [studentId], references: [id])
+  institution Institution     @relation(fields: [institutionId], references: [id])
+  department  Department      @relation(fields: [departmentId], references: [id])
+  session     AcademicSession @relation(fields: [sessionId], references: [id])
+  student     User            @relation("ProjectStudent", fields: [studentId], references: [id])
 
-  members       ProjectMember[]
-  milestones    Milestone[]
-  documents     Document[]
-  meetings      Meeting[]
-  grades        Grade[]
-  messages      Message[]
+  members    ProjectMember[]
+  milestones Milestone[]
+  documents  Document[]
+  meetings   Meeting[]
+  grades     Grade[]
+  messages   Message[]
 
+  @@unique([studentId, sessionId])
   @@index([studentId])
   @@index([institutionId, sessionId, currentStage])
   @@index([currentStage, stageStatus])
-  @@unique([studentId, sessionId])
 }
 
 model ProjectMember {
@@ -281,11 +290,11 @@ model ProjectMember {
   role       ProjectMemberRole
   assignedAt DateTime          @default(now())
 
-  project    Project           @relation(fields: [projectId], references: [id])
-  user       User              @relation(fields: [userId], references: [id])
+  project Project @relation(fields: [projectId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
 
-  @@index([projectId, role])
   @@unique([projectId, userId, role])
+  @@index([projectId, role])
 }
 
 model Milestone {
@@ -298,46 +307,46 @@ model Milestone {
   status      MilestoneStatus
   createdAt   DateTime        @default(now())
 
-  project     Project         @relation(fields: [projectId], references: [id])
+  project Project @relation(fields: [projectId], references: [id])
 }
 
 model Document {
-  id                 String            @id @default(uuid()) @db.Uuid
-  projectId          String            @db.Uuid
-  uploadedById       String            @db.Uuid
+  id                 String       @id @default(uuid()) @db.Uuid
+  projectId          String       @db.Uuid
+  uploadedById       String       @db.Uuid
   name               String
   type               DocumentType
   cloudinaryPublicId String
   cloudinaryUrl      String
   fileSize           Int
   mimeType           String
-  currentVersion     Int               @default(1)
-  isDeleted          Boolean           @default(false)
+  currentVersion     Int          @default(1)
+  isDeleted          Boolean      @default(false)
   deletedAt          DateTime?
-  createdAt          DateTime          @default(now())
+  createdAt          DateTime     @default(now())
 
-  project            Project           @relation(fields: [projectId], references: [id])
-  uploadedBy         User              @relation("DocumentUploader", fields: [uploadedById], references: [id])
-  versions           DocumentVersion[]
+  project    Project           @relation(fields: [projectId], references: [id])
+  uploadedBy User              @relation("DocumentUploader", fields: [uploadedById], references: [id])
+  versions   DocumentVersion[]
 
   @@index([projectId, type])
 }
 
 model DocumentVersion {
-  id                 String      @id @default(uuid()) @db.Uuid
-  documentId         String      @db.Uuid
+  id                 String   @id @default(uuid()) @db.Uuid
+  documentId         String   @db.Uuid
   versionNumber      Int
   cloudinaryPublicId String
   cloudinaryUrl      String
   fileSize           Int
   changeNotes        String?
-  createdAt          DateTime    @default(now())
+  createdAt          DateTime @default(now())
 
-  document           Document    @relation(fields: [documentId], references: [id])
-  feedback           Feedback[]
+  document Document   @relation(fields: [documentId], references: [id])
+  feedback Feedback[]
 
-  @@index([documentId, versionNumber])
   @@unique([documentId, versionNumber])
+  @@index([documentId, versionNumber])
 }
 
 model Feedback {
@@ -352,16 +361,16 @@ model Feedback {
   positionY         Float?
   createdAt         DateTime     @default(now())
 
-  documentVersion   DocumentVersion @relation(fields: [documentVersionId], references: [id])
-  author            User         @relation("FeedbackAuthor", fields: [authorId], references: [id])
+  documentVersion DocumentVersion @relation(fields: [documentVersionId], references: [id])
+  author          User            @relation("FeedbackAuthor", fields: [authorId], references: [id])
 
   @@index([documentVersionId])
 }
 
 model Meeting {
-  id            String           @id @default(uuid()) @db.Uuid
-  projectId     String           @db.Uuid
-  scheduledById String           @db.Uuid
+  id            String        @id @default(uuid()) @db.Uuid
+  projectId     String        @db.Uuid
+  scheduledById String        @db.Uuid
   title         String
   type          MeetingType
   location      String?
@@ -369,26 +378,26 @@ model Meeting {
   scheduledAt   DateTime
   duration      Int
   status        MeetingStatus
-  reminderSent  Boolean          @default(false)
-  createdAt     DateTime         @default(now())
+  reminderSent  Boolean       @default(false)
+  createdAt     DateTime      @default(now())
 
-  project       Project          @relation(fields: [projectId], references: [id])
-  scheduledBy   User             @relation("MeetingScheduler", fields: [scheduledById], references: [id])
-  attendances   MeetingAttendance[]
-  notes         MeetingNote[]
+  project     Project             @relation(fields: [projectId], references: [id])
+  scheduledBy User                @relation("MeetingScheduler", fields: [scheduledById], references: [id])
+  attendances MeetingAttendance[]
+  notes       MeetingNote[]
 
   @@index([projectId, scheduledAt])
 }
 
 model MeetingAttendance {
-  id        String   @id @default(uuid()) @db.Uuid
-  meetingId String   @db.Uuid
-  userId    String   @db.Uuid
-  attended  Boolean  @default(false)
+  id        String  @id @default(uuid()) @db.Uuid
+  meetingId String  @db.Uuid
+  userId    String  @db.Uuid
+  attended  Boolean @default(false)
   notes     String?
 
-  meeting   Meeting  @relation(fields: [meetingId], references: [id])
-  user      User     @relation(fields: [userId], references: [id])
+  meeting Meeting @relation(fields: [meetingId], references: [id])
+  user    User    @relation(fields: [userId], references: [id])
 
   @@unique([meetingId, userId])
 }
@@ -400,8 +409,8 @@ model MeetingNote {
   content   String
   createdAt DateTime @default(now())
 
-  meeting   Meeting  @relation(fields: [meetingId], references: [id])
-  author    User     @relation("MeetingNoteAuthor", fields: [authorId], references: [id])
+  meeting Meeting @relation(fields: [meetingId], references: [id])
+  author  User    @relation("MeetingNoteAuthor", fields: [authorId], references: [id])
 }
 
 model Grade {
@@ -417,52 +426,52 @@ model Grade {
   createdAt    DateTime    @default(now())
   updatedAt    DateTime    @updatedAt
 
-  project      Project     @relation(fields: [projectId], references: [id])
-  rubric       Rubric      @relation(fields: [rubricId], references: [id])
-  assessedBy   User        @relation("GradeAssessor", fields: [assessedById], references: [id])
-  approvedBy   User?       @relation("GradeApprover", fields: [approvedById], references: [id])
-  components   GradeComponent[]
+  project    Project          @relation(fields: [projectId], references: [id])
+  rubric     Rubric           @relation(fields: [rubricId], references: [id])
+  assessedBy User             @relation("GradeAssessor", fields: [assessedById], references: [id])
+  approvedBy User?            @relation("GradeApprover", fields: [approvedById], references: [id])
+  components GradeComponent[]
 
   @@index([projectId, assessedById])
 }
 
 model GradeComponent {
-  id          String   @id @default(uuid()) @db.Uuid
-  gradeId     String   @db.Uuid
-  criterionId String   @db.Uuid
+  id          String  @id @default(uuid()) @db.Uuid
+  gradeId     String  @db.Uuid
+  criterionId String  @db.Uuid
   score       Float
   maxScore    Float
   comment     String?
 
-  grade       Grade    @relation(fields: [gradeId], references: [id])
-  criterion   RubricCriterion @relation(fields: [criterionId], references: [id])
+  grade     Grade           @relation(fields: [gradeId], references: [id])
+  criterion RubricCriterion @relation(fields: [criterionId], references: [id])
 }
 
 model Rubric {
-  id            String      @id @default(uuid()) @db.Uuid
-  institutionId String      @db.Uuid
-  departmentId  String?     @db.Uuid
+  id            String   @id @default(uuid()) @db.Uuid
+  institutionId String   @db.Uuid
+  departmentId  String?  @db.Uuid
   name          String
   description   String?
-  isDefault     Boolean     @default(false)
-  createdAt     DateTime    @default(now())
+  isDefault     Boolean  @default(false)
+  createdAt     DateTime @default(now())
 
-  institution   Institution @relation(fields: [institutionId], references: [id])
-  department    Department? @relation(fields: [departmentId], references: [id])
-  criteria      RubricCriterion[]
-  grades        Grade[]
+  institution Institution       @relation(fields: [institutionId], references: [id])
+  department  Department?       @relation(fields: [departmentId], references: [id])
+  criteria    RubricCriterion[]
+  grades      Grade[]
 }
 
 model RubricCriterion {
-  id          String   @id @default(uuid()) @db.Uuid
-  rubricId    String   @db.Uuid
+  id          String  @id @default(uuid()) @db.Uuid
+  rubricId    String  @db.Uuid
   name        String
   description String?
   maxScore    Float
-  weight      Float    @default(1.0)
+  weight      Float   @default(1.0)
   order       Int
 
-  rubric      Rubric   @relation(fields: [rubricId], references: [id])
+  rubric          Rubric           @relation(fields: [rubricId], references: [id])
   gradeComponents GradeComponent[]
 }
 
@@ -474,26 +483,26 @@ model Message {
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
 
-  project   Project  @relation(fields: [projectId], references: [id])
-  sender    User     @relation("MessageSender", fields: [senderId], references: [id])
+  project Project @relation(fields: [projectId], references: [id])
+  sender  User    @relation("MessageSender", fields: [senderId], references: [id])
 }
 
 model Announcement {
-  id            String       @id @default(uuid()) @db.Uuid
-  institutionId String       @db.Uuid
-  departmentId  String?      @db.Uuid
-  sessionId     String?      @db.Uuid
-  authorId      String       @db.Uuid
+  id            String               @id @default(uuid()) @db.Uuid
+  institutionId String               @db.Uuid
+  departmentId  String?              @db.Uuid
+  sessionId     String?              @db.Uuid
+  authorId      String               @db.Uuid
   title         String
   content       String
   priority      AnnouncementPriority
   expiresAt     DateTime?
-  createdAt     DateTime     @default(now())
+  createdAt     DateTime             @default(now())
 
-  institution   Institution  @relation(fields: [institutionId], references: [id])
-  department    Department?  @relation(fields: [departmentId], references: [id])
-  session       AcademicSession? @relation(fields: [sessionId], references: [id])
-  author        User         @relation("AnnouncementAuthor", fields: [authorId], references: [id])
+  institution Institution      @relation(fields: [institutionId], references: [id])
+  department  Department?      @relation(fields: [departmentId], references: [id])
+  session     AcademicSession? @relation(fields: [sessionId], references: [id])
+  author      User             @relation("AnnouncementAuthor", fields: [authorId], references: [id])
 }
 
 model Notification {
@@ -507,25 +516,25 @@ model Notification {
   sentVia   NotificationChannel[]
   createdAt DateTime              @default(now())
 
-  user      User                  @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 
   @@index([userId, isRead, createdAt])
 }
 
 model AuditLog {
-  id            String      @id @default(uuid()) @db.Uuid
-  institutionId String      @db.Uuid
-  userId        String?     @db.Uuid
+  id            String   @id @default(uuid()) @db.Uuid
+  institutionId String   @db.Uuid
+  userId        String?  @db.Uuid
   action        String
   entityType    String
-  entityId      String      @db.Uuid
+  entityId      String   @db.Uuid
   metadata      Json
   ipAddress     String?
   userAgent     String?
-  createdAt     DateTime    @default(now())
+  createdAt     DateTime @default(now())
 
-  institution   Institution @relation(fields: [institutionId], references: [id])
-  user          User?       @relation(fields: [userId], references: [id])
+  institution Institution @relation(fields: [institutionId], references: [id])
+  user        User?       @relation(fields: [userId], references: [id])
 
   @@index([institutionId, createdAt])
 }
@@ -542,6 +551,66 @@ model Report {
   createdAt     DateTime     @default(now())
   completedAt   DateTime?
 
-  institution   Institution  @relation(fields: [institutionId], references: [id])
-  generatedBy   User         @relation("ReportGenerator", fields: [generatedById], references: [id])
+  institution Institution @relation(fields: [institutionId], references: [id])
+  generatedBy User        @relation("ReportGenerator", fields: [generatedById], references: [id])
+}
+
+// ── Better Auth ─────────────────────────────────────────────────────────────
+// Tables owned by Better Auth (email/password + JWT plugin). Credentials live
+// in Account (providerId "credential", `password` column) — never on User.
+// Ids use the same UUID strategy as the domain models so Better Auth records
+// stay type-compatible with existing FKs into User.id; server/auth.ts sets
+// `advanced.database.generateId: false` so the database fills these defaults.
+
+model Session {
+  id        String   @id @default(uuid()) @db.Uuid
+  userId    String   @db.Uuid
+  token     String   @unique
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id @default(uuid()) @db.Uuid
+  userId                String    @db.Uuid
+  accountId             String
+  providerId            String
+  accessToken           String?
+  refreshToken          String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  idToken               String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id @default(uuid()) @db.Uuid
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
+}
+
+model Jwks {
+  id         String   @id @default(uuid()) @db.Uuid
+  publicKey  String
+  privateKey String
+  createdAt  DateTime @default(now())
 }
