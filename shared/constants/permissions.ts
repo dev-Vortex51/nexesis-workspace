@@ -42,9 +42,14 @@ export const PERMISSIONS = {
 
   // Institutions (spec: "super-admin only"). No User.role value maps to
   // super-admin, so these are granted to NO role and fail closed until a
-  // dedicated system role exists — see the file header.
+  // dedicated system role exists — see the file header. The institution
+  // registry is a global, cross-tenant resource, so its detail read, update,
+  // and soft-delete are gated the same way as list/create.
   INSTITUTION_LIST: "institution:list", // GET /institutions
   INSTITUTION_CREATE: "institution:create", // POST /institutions
+  INSTITUTION_GET: "institution:get", // GET /institutions/:id
+  INSTITUTION_UPDATE: "institution:update", // PATCH /institutions/:id
+  INSTITUTION_DELETE: "institution:delete", // DELETE /institutions/:id
 
   // Departments
   DEPARTMENT_CREATE: "department:create", // POST /departments — admin only
@@ -123,9 +128,9 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     P.USER_UPDATE_ANY,
     P.USER_SUSPEND,
     P.USER_ASSIGN_SUPERVISOR,
-    // INSTITUTION_LIST / INSTITUTION_CREATE are intentionally NOT granted:
-    // the spec restricts them to "super-admin", a role the data model does not
-    // define, so they fail closed (see file header).
+    // INSTITUTION_* permissions are intentionally NOT granted: the spec
+    // restricts institution management to "super-admin", a role the data model
+    // does not define, so they fail closed (see file header).
     P.DEPARTMENT_CREATE,
     P.SESSION_CREATE,
     P.PROJECT_CREATE,
