@@ -1,35 +1,8 @@
 import { PrismaClient } from "@prisma/client";
+import { fileURLToPath } from "node:url";
 
-const prisma = new PrismaClient();
-
-async function main() {
-  await prisma.gradeComponent.deleteMany();
-  await prisma.grade.deleteMany();
-  await prisma.rubricCriterion.deleteMany();
-  await prisma.rubric.deleteMany();
-
-  await prisma.feedback.deleteMany();
-  await prisma.documentVersion.deleteMany();
-  await prisma.document.deleteMany();
-
-  await prisma.meetingNote.deleteMany();
-  await prisma.meetingAttendance.deleteMany();
-  await prisma.meeting.deleteMany();
-
-  await prisma.message.deleteMany();
-  await prisma.notification.deleteMany();
-  await prisma.announcement.deleteMany();
-  await prisma.auditLog.deleteMany();
-  await prisma.report.deleteMany();
-
-  await prisma.milestone.deleteMany();
-  await prisma.projectMember.deleteMany();
-  await prisma.project.deleteMany();
-
-  await prisma.user.deleteMany();
-  await prisma.academicSession.deleteMany();
-  await prisma.department.deleteMany();
-  await prisma.institution.deleteMany();
+export async function seedFixtures(prismaClient: PrismaClient) {
+  const prisma = prismaClient;
 
   const institution = await prisma.institution.create({
     data: {
@@ -306,7 +279,7 @@ async function main() {
       type: "workflow",
       title: "Feedback Received",
       body: "Your topic proposal has new supervisor feedback.",
-      actionUrl: "/projects/1/documents",
+      actionUrl: `/projects/${project.id}/documents`,
       isRead: false,
       sentVia: ["in_app", "email"],
     },
@@ -349,11 +322,19 @@ async function main() {
   );
 }
 
-main()
-  .catch((error) => {
+async function main() {
+  const prisma = new PrismaClient();
+
+  try {
+    await seedFixtures(prisma);
+  } finally {
+    await prisma.$disconnect();
+  }
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
+  main().catch((error) => {
     console.error(error);
     process.exit(1);
-  })
-  .finally(async () => {
-    await prisma.$disconnect();
   });
+}
