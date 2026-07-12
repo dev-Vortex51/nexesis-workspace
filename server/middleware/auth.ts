@@ -66,7 +66,8 @@ export async function requireAuth(
     }
     req.user = user;
     next();
-  } catch {
+  } catch (error) {
+    console.error("Session resolution failed in requireAuth:", error);
     sendError(res, 401, "UNAUTHORIZED", "Authentication required");
   }
 }

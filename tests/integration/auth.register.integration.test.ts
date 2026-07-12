@@ -19,7 +19,19 @@ import { prisma } from "../../server/lib/prisma";
 
 let server: Server;
 let baseUrl: string;
-let dbAvailable = true;
+
+// Detect Postgres availability before collection. `it.runIf(dbAvailable)` is
+// evaluated while the describe block is collected — which happens before any
+// beforeAll runs — so the probe must complete at module-init (top-level await),
+// otherwise runIf would always see the initial value and never skip.
+const dbAvailable = await (async (): Promise<boolean> => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    return true;
+  } catch {
+    return false;
+  }
+})();
 
 const created: {
   institutionA?: string;
@@ -74,12 +86,9 @@ async function loginCookie(email: string): Promise<string> {
 }
 
 beforeAll(async () => {
-  try {
-    await prisma.$queryRaw`SELECT 1`;
-  } catch {
-    dbAvailable = false;
-    return;
-  }
+  // The database probe ran at module init (see dbAvailable). Skip all
+  // database-dependent setup when Postgres is unreachable.
+  if (!dbAvailable) return;
 
   const instA = await prisma.institution.create({
     data: {

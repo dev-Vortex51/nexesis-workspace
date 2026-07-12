@@ -1,5 +1,4 @@
 import { Router, type Request, type Response } from "express";
-import { fromNodeHeaders } from "better-auth/node";
 import { ZodError } from "zod";
 import { auth } from "../auth";
 import { prisma } from "../lib/prisma";
@@ -99,7 +98,9 @@ router.post("/login", async (req: Request, res: Response) => {
 // GET /auth/me
 router.get("/me", requireAuth, async (req: Request, res: Response) => {
   try {
-    const user = await authService.getCurrentUser(fromNodeHeaders(req.headers));
+    // requireAuth guarantees req.user is populated; reuse its id rather than
+    // re-resolving the session from headers.
+    const user = await authService.getUserById(req.user!.id);
     sendSuccess(res, user, 200);
   } catch (error) {
     handleError(res, error);

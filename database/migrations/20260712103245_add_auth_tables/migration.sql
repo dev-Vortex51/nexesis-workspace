@@ -76,13 +76,17 @@ ALTER TABLE "public"."RubricCriterion" ALTER COLUMN "id" DROP DEFAULT;
 ALTER TABLE "public"."User" DROP COLUMN "passwordHash",
 ADD COLUMN     "emailVerified" BOOLEAN NOT NULL DEFAULT false,
 ADD COLUMN     "image" TEXT,
-ADD COLUMN     "name" TEXT NOT NULL,
-ALTER COLUMN "id" DROP DEFAULT,
+ADD COLUMN     "name" TEXT,
 ALTER COLUMN "status" SET DEFAULT 'active';
+
+-- Backfill "name" for existing rows from the domain name columns, then enforce
+-- NOT NULL. Done in three steps so the migration succeeds on a populated table.
+UPDATE "public"."User" SET "name" = "firstName" || ' ' || "lastName" WHERE "name" IS NULL;
+ALTER TABLE "public"."User" ALTER COLUMN "name" SET NOT NULL;
 
 -- CreateTable
 CREATE TABLE "public"."Session" (
-    "id" UUID NOT NULL,
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "userId" UUID NOT NULL,
     "token" TEXT NOT NULL,
     "expiresAt" TIMESTAMP(3) NOT NULL,
@@ -96,7 +100,7 @@ CREATE TABLE "public"."Session" (
 
 -- CreateTable
 CREATE TABLE "public"."Account" (
-    "id" UUID NOT NULL,
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "userId" UUID NOT NULL,
     "accountId" TEXT NOT NULL,
     "providerId" TEXT NOT NULL,
@@ -115,7 +119,7 @@ CREATE TABLE "public"."Account" (
 
 -- CreateTable
 CREATE TABLE "public"."Verification" (
-    "id" UUID NOT NULL,
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "identifier" TEXT NOT NULL,
     "value" TEXT NOT NULL,
     "expiresAt" TIMESTAMP(3) NOT NULL,
@@ -127,7 +131,7 @@ CREATE TABLE "public"."Verification" (
 
 -- CreateTable
 CREATE TABLE "public"."Jwks" (
-    "id" UUID NOT NULL,
+    "id" UUID NOT NULL DEFAULT gen_random_uuid(),
     "publicKey" TEXT NOT NULL,
     "privateKey" TEXT NOT NULL,
     "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,

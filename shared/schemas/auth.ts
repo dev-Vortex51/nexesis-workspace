@@ -30,7 +30,6 @@ export const RegisterRequestSchema = z.object({
     .max(128, "Password must be at most 128 characters"),
   firstName: z.string().min(1, "First name is required"),
   lastName: z.string().min(1, "Last name is required"),
-  role: z.enum(USER_ROLES),
   institutionId: z.string().uuid("Invalid institution ID"),
   departmentId: z.string().uuid("Invalid department ID").nullable().optional(),
 });
@@ -40,7 +39,10 @@ export type RegisterRequest = z.infer<typeof RegisterRequestSchema>;
 // POST /auth/login
 export const LoginRequestSchema = z.object({
   email: z.string().email("Invalid email format"),
-  password: z.string().min(1, "Password is required"),
+  password: z
+    .string()
+    .min(1, "Password is required")
+    .max(128, "Password must be at most 128 characters"),
   mfaCode: z
     .string()
     .length(6, "MFA code must be 6 digits")
@@ -80,9 +82,11 @@ export const UserResponseSchema = z.object({
   status: z.enum(USER_STATUSES),
   mfaEnabled: z.boolean(),
   emailVerified: z.boolean(),
-  lastLoginAt: z.date().nullable(),
-  createdAt: z.date(),
-  updatedAt: z.date(),
+  // Dates cross the HTTP boundary as ISO datetime strings; coerce them back to
+  // Date so payloads parse while the UserResponse contract stays Date-typed.
+  lastLoginAt: z.coerce.date().nullable(),
+  createdAt: z.coerce.date(),
+  updatedAt: z.coerce.date(),
 });
 
 export type UserResponse = z.infer<typeof UserResponseSchema>;

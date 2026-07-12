@@ -76,7 +76,10 @@ export class AuthService {
           name: `${data.firstName} ${data.lastName}`,
           firstName: data.firstName,
           lastName: data.lastName,
-          role: data.role,
+          // Public registration always creates a base "student" account. Creating
+          // elevated roles is restricted to a separate admin-only flow and must
+          // never be driven by the client-supplied payload.
+          role: "student",
           institutionId: data.institutionId,
           departmentId: data.departmentId ?? null,
         },
@@ -128,6 +131,15 @@ export class AuthService {
       throw new AuthenticationError("Not authenticated");
     }
     const user = await this.requireUserById(session.user.id);
+    return this.toUserResponse(user);
+  }
+
+  /**
+   * Load a user's public response by id. Used by routes that already hold the
+   * authenticated id (from requireAuth) and need not re-resolve the session.
+   */
+  async getUserById(userId: string): Promise<UserResponse> {
+    const user = await this.requireUserById(userId);
     return this.toUserResponse(user);
   }
 

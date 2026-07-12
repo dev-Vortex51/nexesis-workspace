@@ -38,7 +38,6 @@ const registerInput: RegisterRequest = {
   password: "password1234",
   firstName: "Ada",
   lastName: "Student",
-  role: "student",
   institutionId: "22222222-2222-2222-2222-222222222222",
   departmentId: "33333333-3333-3333-3333-333333333333",
 };
