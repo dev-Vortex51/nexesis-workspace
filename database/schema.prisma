@@ -1,0 +1,547 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SubscriptionTier {
+  free
+  standard
+  enterprise
+}
+
+enum AcademicSessionStatus {
+  planning
+  active
+  closed
+  archived
+}
+
+enum UserRole {
+  student
+  supervisor
+  coordinator
+  hod
+  admin
+  examiner
+}
+
+enum UserStatus {
+  active
+  suspended
+  inactive
+}
+
+enum WorkflowStage {
+  registration
+  supervisor_assignment
+  topic_proposal
+  topic_approval
+  proposal
+  chapter_reviews
+  final_submission
+  supervisor_approval
+  defense
+  completion
+  archive
+}
+
+enum StageStatus {
+  pending
+  in_review
+  approved
+  revision_requested
+}
+
+enum ProjectMemberRole {
+  primary_supervisor
+  co_supervisor
+  examiner
+}
+
+enum MilestoneStatus {
+  pending
+  overdue
+  completed
+}
+
+enum DocumentType {
+  topic_proposal
+  proposal
+  chapter
+  report
+  assessment
+  defense
+  final_thesis
+  other
+}
+
+enum FeedbackType {
+  inline_comment
+  general_comment
+  voice_note
+  annotation
+  approval_comment
+}
+
+enum MeetingType {
+  physical
+  online
+}
+
+enum MeetingStatus {
+  scheduled
+  completed
+  cancelled
+  no_show
+}
+
+enum GradeStatus {
+  draft
+  submitted
+  approved
+  rejected
+}
+
+enum AnnouncementPriority {
+  low
+  normal
+  high
+  urgent
+}
+
+enum NotificationType {
+  workflow
+  deadline
+  meeting
+  grade
+  system
+}
+
+enum NotificationChannel {
+  in_app
+  email
+  sms
+  push
+}
+
+enum ReportType {
+  student_progress
+  supervisor_workload
+  department_performance
+  completion
+  grading
+  activity
+  compliance
+  audit
+}
+
+enum ReportFormat {
+  pdf
+  excel
+}
+
+enum ReportStatus {
+  queued
+  generating
+  completed
+  failed
+}
+
+model Institution {
+  id               String                 @id @default(uuid()) @db.Uuid
+  name             String
+  slug             String                 @unique
+  logoUrl          String?
+  settings         Json
+  subscriptionTier SubscriptionTier
+  createdAt        DateTime               @default(now())
+  updatedAt        DateTime               @updatedAt
+
+  departments      Department[]
+  sessions         AcademicSession[]
+  users            User[]
+  projects         Project[]
+  rubrics          Rubric[]
+  announcements    Announcement[]
+  auditLogs        AuditLog[]
+  reports          Report[]
+}
+
+model Department {
+  id            String        @id @default(uuid()) @db.Uuid
+  institutionId String        @db.Uuid
+  name          String
+  code          String
+  createdAt     DateTime      @default(now())
+
+  institution   Institution   @relation(fields: [institutionId], references: [id])
+  users         User[]
+  projects      Project[]
+  rubrics       Rubric[]
+  announcements Announcement[]
+}
+
+model AcademicSession {
+  id            String                @id @default(uuid()) @db.Uuid
+  institutionId String                @db.Uuid
+  name          String
+  startDate     DateTime              @db.Date
+  endDate       DateTime              @db.Date
+  status        AcademicSessionStatus
+  settings      Json
+  createdAt     DateTime              @default(now())
+
+  institution   Institution           @relation(fields: [institutionId], references: [id])
+  projects      Project[]
+  announcements Announcement[]
+
+  @@unique([institutionId, name])
+}
+
+model User {
+  id             String          @id @default(uuid()) @db.Uuid
+  institutionId  String          @db.Uuid
+  departmentId   String?         @db.Uuid
+  email          String          @unique
+  passwordHash   String
+  firstName      String
+  lastName       String
+  role           UserRole
+  mfaEnabled     Boolean         @default(false)
+  mfaSecret      String?
+  status         UserStatus
+  lastLoginAt    DateTime?
+  createdAt      DateTime        @default(now())
+  updatedAt      DateTime        @updatedAt
+
+  institution    Institution     @relation(fields: [institutionId], references: [id])
+  department     Department?     @relation(fields: [departmentId], references: [id])
+
+  studentProjects               Project[]             @relation("ProjectStudent")
+  projectMemberships            ProjectMember[]
+  uploadedDocuments             Document[]            @relation("DocumentUploader")
+  feedbackAuthored              Feedback[]            @relation("FeedbackAuthor")
+  scheduledMeetings             Meeting[]             @relation("MeetingScheduler")
+  meetingAttendances            MeetingAttendance[]
+  meetingNotesAuthored          MeetingNote[]         @relation("MeetingNoteAuthor")
+  gradesAssessed                Grade[]               @relation("GradeAssessor")
+  gradesApproved                Grade[]               @relation("GradeApprover")
+  messagesSent                  Message[]             @relation("MessageSender")
+  announcementsAuthored         Announcement[]        @relation("AnnouncementAuthor")
+  notifications                 Notification[]
+  auditLogs                     AuditLog[]
+  reportsGenerated              Report[]              @relation("ReportGenerator")
+
+  @@index([institutionId, role])
+}
+
+model Project {
+  id            String         @id @default(uuid()) @db.Uuid
+  institutionId String         @db.Uuid
+  departmentId  String         @db.Uuid
+  sessionId     String         @db.Uuid
+  studentId     String         @db.Uuid
+  title         String?
+  description   String?
+  currentStage  WorkflowStage
+  stageStatus   StageStatus
+  progress      Int
+  deadline      DateTime?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+  completedAt   DateTime?
+  archivedAt    DateTime?
+
+  institution   Institution    @relation(fields: [institutionId], references: [id])
+  department    Department     @relation(fields: [departmentId], references: [id])
+  session       AcademicSession @relation(fields: [sessionId], references: [id])
+  student       User           @relation("ProjectStudent", fields: [studentId], references: [id])
+
+  members       ProjectMember[]
+  milestones    Milestone[]
+  documents     Document[]
+  meetings      Meeting[]
+  grades        Grade[]
+  messages      Message[]
+
+  @@index([studentId])
+  @@index([institutionId, sessionId, currentStage])
+  @@index([currentStage, stageStatus])
+  @@unique([studentId, sessionId])
+}
+
+model ProjectMember {
+  id         String            @id @default(uuid()) @db.Uuid
+  projectId  String            @db.Uuid
+  userId     String            @db.Uuid
+  role       ProjectMemberRole
+  assignedAt DateTime          @default(now())
+
+  project    Project           @relation(fields: [projectId], references: [id])
+  user       User              @relation(fields: [userId], references: [id])
+
+  @@index([projectId, role])
+  @@unique([projectId, userId, role])
+}
+
+model Milestone {
+  id          String          @id @default(uuid()) @db.Uuid
+  projectId   String          @db.Uuid
+  name        String
+  stage       WorkflowStage
+  deadline    DateTime
+  completedAt DateTime?
+  status      MilestoneStatus
+  createdAt   DateTime        @default(now())
+
+  project     Project         @relation(fields: [projectId], references: [id])
+}
+
+model Document {
+  id                 String            @id @default(uuid()) @db.Uuid
+  projectId          String            @db.Uuid
+  uploadedById       String            @db.Uuid
+  name               String
+  type               DocumentType
+  cloudinaryPublicId String
+  cloudinaryUrl      String
+  fileSize           Int
+  mimeType           String
+  currentVersion     Int               @default(1)
+  isDeleted          Boolean           @default(false)
+  deletedAt          DateTime?
+  createdAt          DateTime          @default(now())
+
+  project            Project           @relation(fields: [projectId], references: [id])
+  uploadedBy         User              @relation("DocumentUploader", fields: [uploadedById], references: [id])
+  versions           DocumentVersion[]
+
+  @@index([projectId, type])
+}
+
+model DocumentVersion {
+  id                 String      @id @default(uuid()) @db.Uuid
+  documentId         String      @db.Uuid
+  versionNumber      Int
+  cloudinaryPublicId String
+  cloudinaryUrl      String
+  fileSize           Int
+  changeNotes        String?
+  createdAt          DateTime    @default(now())
+
+  document           Document    @relation(fields: [documentId], references: [id])
+  feedback           Feedback[]
+
+  @@index([documentId, versionNumber])
+  @@unique([documentId, versionNumber])
+}
+
+model Feedback {
+  id                String       @id @default(uuid()) @db.Uuid
+  documentVersionId String       @db.Uuid
+  authorId          String       @db.Uuid
+  type              FeedbackType
+  content           String?
+  audioUrl          String?
+  pageNumber        Int?
+  positionX         Float?
+  positionY         Float?
+  createdAt         DateTime     @default(now())
+
+  documentVersion   DocumentVersion @relation(fields: [documentVersionId], references: [id])
+  author            User         @relation("FeedbackAuthor", fields: [authorId], references: [id])
+
+  @@index([documentVersionId])
+}
+
+model Meeting {
+  id            String           @id @default(uuid()) @db.Uuid
+  projectId     String           @db.Uuid
+  scheduledById String           @db.Uuid
+  title         String
+  type          MeetingType
+  location      String?
+  meetingUrl    String?
+  scheduledAt   DateTime
+  duration      Int
+  status        MeetingStatus
+  reminderSent  Boolean          @default(false)
+  createdAt     DateTime         @default(now())
+
+  project       Project          @relation(fields: [projectId], references: [id])
+  scheduledBy   User             @relation("MeetingScheduler", fields: [scheduledById], references: [id])
+  attendances   MeetingAttendance[]
+  notes         MeetingNote[]
+
+  @@index([projectId, scheduledAt])
+}
+
+model MeetingAttendance {
+  id        String   @id @default(uuid()) @db.Uuid
+  meetingId String   @db.Uuid
+  userId    String   @db.Uuid
+  attended  Boolean  @default(false)
+  notes     String?
+
+  meeting   Meeting  @relation(fields: [meetingId], references: [id])
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@unique([meetingId, userId])
+}
+
+model MeetingNote {
+  id        String   @id @default(uuid()) @db.Uuid
+  meetingId String   @db.Uuid
+  authorId  String   @db.Uuid
+  content   String
+  createdAt DateTime @default(now())
+
+  meeting   Meeting  @relation(fields: [meetingId], references: [id])
+  author    User     @relation("MeetingNoteAuthor", fields: [authorId], references: [id])
+}
+
+model Grade {
+  id           String      @id @default(uuid()) @db.Uuid
+  projectId    String      @db.Uuid
+  rubricId     String      @db.Uuid
+  assessedById String      @db.Uuid
+  totalScore   Float
+  maxScore     Float
+  percentage   Float
+  status       GradeStatus
+  approvedById String?     @db.Uuid
+  createdAt    DateTime    @default(now())
+  updatedAt    DateTime    @updatedAt
+
+  project      Project     @relation(fields: [projectId], references: [id])
+  rubric       Rubric      @relation(fields: [rubricId], references: [id])
+  assessedBy   User        @relation("GradeAssessor", fields: [assessedById], references: [id])
+  approvedBy   User?       @relation("GradeApprover", fields: [approvedById], references: [id])
+  components   GradeComponent[]
+
+  @@index([projectId, assessedById])
+}
+
+model GradeComponent {
+  id          String   @id @default(uuid()) @db.Uuid
+  gradeId     String   @db.Uuid
+  criterionId String   @db.Uuid
+  score       Float
+  maxScore    Float
+  comment     String?
+
+  grade       Grade    @relation(fields: [gradeId], references: [id])
+  criterion   RubricCriterion @relation(fields: [criterionId], references: [id])
+}
+
+model Rubric {
+  id            String      @id @default(uuid()) @db.Uuid
+  institutionId String      @db.Uuid
+  departmentId  String?     @db.Uuid
+  name          String
+  description   String?
+  isDefault     Boolean     @default(false)
+  createdAt     DateTime    @default(now())
+
+  institution   Institution @relation(fields: [institutionId], references: [id])
+  department    Department? @relation(fields: [departmentId], references: [id])
+  criteria      RubricCriterion[]
+  grades        Grade[]
+}
+
+model RubricCriterion {
+  id          String   @id @default(uuid()) @db.Uuid
+  rubricId    String   @db.Uuid
+  name        String
+  description String?
+  maxScore    Float
+  weight      Float    @default(1.0)
+  order       Int
+
+  rubric      Rubric   @relation(fields: [rubricId], references: [id])
+  gradeComponents GradeComponent[]
+}
+
+model Message {
+  id        String   @id @default(uuid()) @db.Uuid
+  projectId String   @db.Uuid
+  senderId  String   @db.Uuid
+  content   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  project   Project  @relation(fields: [projectId], references: [id])
+  sender    User     @relation("MessageSender", fields: [senderId], references: [id])
+}
+
+model Announcement {
+  id            String       @id @default(uuid()) @db.Uuid
+  institutionId String       @db.Uuid
+  departmentId  String?      @db.Uuid
+  sessionId     String?      @db.Uuid
+  authorId      String       @db.Uuid
+  title         String
+  content       String
+  priority      AnnouncementPriority
+  expiresAt     DateTime?
+  createdAt     DateTime     @default(now())
+
+  institution   Institution  @relation(fields: [institutionId], references: [id])
+  department    Department?  @relation(fields: [departmentId], references: [id])
+  session       AcademicSession? @relation(fields: [sessionId], references: [id])
+  author        User         @relation("AnnouncementAuthor", fields: [authorId], references: [id])
+}
+
+model Notification {
+  id        String                @id @default(uuid()) @db.Uuid
+  userId    String                @db.Uuid
+  type      NotificationType
+  title     String
+  body      String
+  actionUrl String?
+  isRead    Boolean               @default(false)
+  sentVia   NotificationChannel[]
+  createdAt DateTime              @default(now())
+
+  user      User                  @relation(fields: [userId], references: [id])
+
+  @@index([userId, isRead, createdAt])
+}
+
+model AuditLog {
+  id            String      @id @default(uuid()) @db.Uuid
+  institutionId String      @db.Uuid
+  userId        String?     @db.Uuid
+  action        String
+  entityType    String
+  entityId      String      @db.Uuid
+  metadata      Json
+  ipAddress     String?
+  userAgent     String?
+  createdAt     DateTime    @default(now())
+
+  institution   Institution @relation(fields: [institutionId], references: [id])
+  user          User?       @relation(fields: [userId], references: [id])
+
+  @@index([institutionId, createdAt])
+}
+
+model Report {
+  id            String       @id @default(uuid()) @db.Uuid
+  institutionId String       @db.Uuid
+  generatedById String       @db.Uuid
+  type          ReportType
+  format        ReportFormat
+  parameters    Json
+  fileUrl       String?
+  status        ReportStatus
+  createdAt     DateTime     @default(now())
+  completedAt   DateTime?
+
+  institution   Institution  @relation(fields: [institutionId], references: [id])
+  generatedBy   User         @relation("ReportGenerator", fields: [generatedById], references: [id])
+}
