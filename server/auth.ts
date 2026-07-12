@@ -28,9 +28,12 @@ export const auth = betterAuth({
     enabled: true,
     minPasswordLength: 8,
     maxPasswordLength: 128,
-    // Registration is an administrative action (see API spec), not a public
-    // self-service flow, so no email verification gate is required here.
-    autoSignIn: true,
+    // Registration is an admin-only action (see API spec) that provisions an
+    // account for someone else — it must NOT establish a session for the
+    // caller. Auto sign-in is therefore disabled; the new user signs in via
+    // POST /auth/login. (With it enabled, signUpEmail would return the new
+    // user's session cookie and hijack the admin's own session.)
+    autoSignIn: false,
   },
 
   user: {

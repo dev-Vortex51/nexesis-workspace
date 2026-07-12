@@ -30,7 +30,10 @@ import type {
 
 export interface AuthResult {
   user: UserResponse;
-  /** Better Auth response carrying the httpOnly session Set-Cookie header(s). */
+  /**
+   * Better Auth response carrying the httpOnly session Set-Cookie header(s).
+   * Produced by login; the route layer forwards it to establish the session.
+   */
   authResponse: Response;
 }
 
@@ -59,10 +62,11 @@ export class AuthService {
 
   /**
    * Register a new user. Better Auth creates the User row and the credential
-   * Account (hashed password). Returns the created user plus the auth response
-   * so the caller can forward the session cookie (auto sign-in is enabled).
+   * Account (hashed password). This is an admin-only provisioning action, so no
+   * session is established (auto sign-in is disabled) and no cookie is returned
+   * — the new user authenticates separately via login.
    */
-  async register(data: RegisterRequest): Promise<AuthResult> {
+  async register(data: RegisterRequest): Promise<UserResponse> {
     let response: Response;
     try {
       response = await this.auth.api.signUpEmail({
@@ -84,7 +88,7 @@ export class AuthService {
     await this.assertOk(response, "register");
 
     const user = await this.requireUserByEmail(data.email);
-    return { user: this.toUserResponse(user), authResponse: response };
+    return this.toUserResponse(user);
   }
 
   /**

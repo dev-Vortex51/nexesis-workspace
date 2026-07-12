@@ -4,7 +4,7 @@ import { ZodError } from "zod";
 import { auth } from "../auth";
 import { prisma } from "../lib/prisma";
 import { createAuthService } from "../services/auth.service";
-import { requireAuth } from "../middleware/auth";
+import { requireAuth, requireRole } from "../middleware/auth";
 import { AppError, sendError, sendSuccess, ValidationError } from "../lib/http";
 import {
   LoginRequestSchema,
@@ -51,17 +51,38 @@ function handleError(res: Response, error: unknown): void {
   sendError(res, 500, "INTERNAL_ERROR", "An unexpected error occurred");
 }
 
-// POST /auth/register
-router.post("/register", async (req: Request, res: Response) => {
-  try {
-    const data = RegisterRequestSchema.parse(req.body);
-    const { user, authResponse } = await authService.register(data);
-    forwardAuthCookies(authResponse, res);
-    sendSuccess(res, user, 201);
-  } catch (error) {
-    handleError(res, error);
-  }
-});
+// POST /auth/register — admin-only account provisioning (see API spec).
+// Guards: authenticated + admin role; the created user is scoped to the
+// admin's own institution. Registration never establishes a session for the
+// caller, so no cookie is forwarded — the new user signs in via /login.
+router.post(
+  "/register",
+  requireAuth,
+  requireRole("admin"),
+  async (req: Request, res: Response) => {
+    try {
+      const data = RegisterRequestSchema.parse(req.body);
+
+      // Tenant isolation: an admin may only provision within their own
+      // institution. Reject cross-institution attempts rather than silently
+      // overriding, so the mismatch is visible to the caller.
+      if (data.institutionId !== req.user!.institutionId) {
+        sendError(
+          res,
+          403,
+          "FORBIDDEN",
+          "Cannot create a user for another institution",
+        );
+        return;
+      }
+
+      const user = await authService.register(data);
+      sendSuccess(res, user, 201);
+    } catch (error) {
+      handleError(res, error);
+    }
+  },
+);
 
 // POST /auth/login
 router.post("/login", async (req: Request, res: Response) => {

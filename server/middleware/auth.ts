@@ -79,6 +79,26 @@ export function hasRole(
   return requiredRoles.includes(user.role);
 }
 
+/**
+ * Guard that requires the authenticated user to hold one of `roles`. Must run
+ * after `requireAuth` (which populates `req.user`); responds 403 otherwise.
+ * A fuller permission matrix is built in unit 0.4 — this is the minimal role
+ * gate needed to enforce the API spec's admin-only mutations.
+ */
+export function requireRole(...roles: string[]) {
+  return (req: Request, res: Response, next: NextFunction): void => {
+    if (!req.user) {
+      sendError(res, 401, "UNAUTHORIZED", "Authentication required");
+      return;
+    }
+    if (!hasRole(req.user, roles)) {
+      sendError(res, 403, "FORBIDDEN", "Insufficient permissions");
+      return;
+    }
+    next();
+  };
+}
+
 /** True when the user belongs to the given institution. */
 export function belongsToInstitution(
   user: SessionUser,

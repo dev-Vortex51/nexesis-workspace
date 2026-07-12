@@ -85,13 +85,10 @@ beforeEach(() => {
 
 describe("AuthService.register", () => {
   it("composes name from first/last and forwards domain additional fields", async () => {
-    const authResponse = new Response(null, {
-      headers: { "set-cookie": "better-auth.session_token=abc; HttpOnly" },
-    });
-    auth.api.signUpEmail.mockResolvedValue(authResponse);
+    auth.api.signUpEmail.mockResolvedValue(new Response(null));
     prisma.user.findUnique.mockResolvedValue(baseUserRow);
 
-    const result = await service.register(registerInput);
+    const user = await service.register(registerInput);
 
     expect(auth.api.signUpEmail).toHaveBeenCalledWith({
       body: {
@@ -106,11 +103,27 @@ describe("AuthService.register", () => {
       },
       asResponse: true,
     });
-    expect(result.authResponse).toBe(authResponse);
-    expect(result.user.email).toBe("ada@nexesis.edu");
+    expect(user.email).toBe("ada@nexesis.edu");
     // never leaks credentials / secrets
-    expect(result.user).not.toHaveProperty("password");
-    expect(result.user).not.toHaveProperty("mfaSecret");
+    expect(user).not.toHaveProperty("password");
+    expect(user).not.toHaveProperty("mfaSecret");
+  });
+
+  it("returns only the user and never establishes a session (no cookie)", async () => {
+    // Even if Better Auth's response carried a Set-Cookie, register must not
+    // surface it — registration provisions an account, it does not sign anyone
+    // in. The return value is the user object, not an AuthResult.
+    auth.api.signUpEmail.mockResolvedValue(
+      new Response(null, {
+        headers: { "set-cookie": "better-auth.session_token=leak; HttpOnly" },
+      }),
+    );
+    prisma.user.findUnique.mockResolvedValue(baseUserRow);
+
+    const user = await service.register(registerInput);
+
+    expect(user).not.toHaveProperty("authResponse");
+    expect(user.id).toBe(baseUserRow.id);
   });
 
   it("defaults a null departmentId when omitted", async () => {
