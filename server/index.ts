@@ -3,6 +3,7 @@ import express from "express";
 import { toNodeHandler } from "better-auth/node";
 import { auth } from "./auth";
 import authRoutes from "./routes/auth";
+import institutionRoutes from "./routes/institutions";
 import { attachUser } from "./middleware/auth";
 import { requestLogger } from "./middleware/request-logger";
 import { rateLimit } from "./middleware/rate-limit";
@@ -64,6 +65,7 @@ export function createServer() {
   );
 
   app.use("/api/v1/auth", authRoutes);
+  app.use("/api/v1/institutions", institutionRoutes);
 
   // Terminal handlers: unmatched route → 404 envelope; anything thrown →
   // mapped error envelope. Must be registered after all routes.
