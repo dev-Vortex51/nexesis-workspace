@@ -38,7 +38,7 @@ Backend unit is complete when:
 
 - [x] 0.1 Project Scaffolding
 - [x] 0.2 Database Setup
-- [ ] 0.3 Auth Foundation
+- [x] 0.3 Auth Foundation
 - [ ] 0.4 RBAC Middleware
 - [ ] 0.5 API Client Setup
 - [ ] 0.6 Socket.IO Setup
@@ -213,6 +213,8 @@ Backend unit is complete when:
 - **Tailwind CSS v4**: `@import "tailwindcss"`, `@theme` block, no `tailwind.config.js`.
 - **API/Client separation**: API logic in `server/`, UI in `app/` and `components/`.
 - **104 feature units**: 67 backend, 37 frontend.
+- **Auth = Better Auth (email/password + JWT plugin)**: httpOnly cookie sessions. Credentials stored in Better Auth's `Account` table (`providerId "credential"`), **not** on `User`. Domain user fields surfaced via `user.additionalFields`; `advanced.database.generateId:false` so PostgreSQL fills UUID ids (keeps FK compatibility with `User.id`).
+- **Data-model deviation (0.3)**: `04-data-model.md` specifies `User.passwordHash`; Better Auth mandates credentials live in `Account`. Per approval, `passwordHash` was **dropped** and `name`/`emailVerified`/`image` added to `User`, plus new `Session`/`Account`/`Verification`/`Jwks` tables (migration `20260712103245_add_auth_tables`). All other `User` fields retained.
 
 ## Session Notes
 
@@ -220,3 +222,4 @@ Backend unit is complete when:
 - Each prompt references specific spec sections to prevent hallucination.
 - Ready to begin with 0.1: Project Scaffolding.
 - 0.1 scaffold completed with Next.js 15, Tailwind CSS v4 tokens, strict TypeScript, and `npm run build` passing.
+- 0.3 Auth Foundation completed: Better Auth integrated (`server/auth.ts`), Express auth routes (`POST /register`, `POST /login`, `GET /me`, `PATCH /me`) returning the standard `{success,data,error}` envelope and forwarding httpOnly session cookies; Express `requireAuth` middleware via `auth.api.getSession`; Zod request schemas; injectable `AuthService` with typed error mapping. 12 Vitest unit tests pass; verified end-to-end against local Postgres (register/login/me/patch, plus duplicate→409 and bad-login→401). Better Auth vendored as a repo skill (`.agents/skills/better-auth`, `skills-lock.json`). New deps: `better-auth`, `express`, `vitest`. Local dev DB `nexesis_dev` created; `DATABASE_URL` in `.env` uses `postgres:postgres@localhost:5432`.

@@ -18,6 +18,12 @@ coverage/
 .DS_Store
 *.log
 
+# typescript
+*.tsbuildinfo
+
+# local claude settings
+.claude/settings.local.json
+
 # editor
 .vscode/
 .idea/
