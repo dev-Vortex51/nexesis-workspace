@@ -27,13 +27,48 @@ export type AppClientSocket = Socket<
 /** Base URL for the Socket.IO server; defaults to the API origin. */
 const DEFAULT_SOCKET_URL = "http://localhost:3000";
 
-function resolveSocketUrl(explicit?: string): string {
+/**
+ * Reduce a URL to just its origin (scheme + host + port), dropping any path.
+ *
+ * `NEXT_PUBLIC_API_URL` follows the API-client convention of including the HTTP
+ * base path (e.g. `https://host/api/v1`). Socket.IO interprets a path in the
+ * URL passed to `io()` as a namespace, but the server only registers the
+ * default namespace — so the raw API URL would silently fail to connect. When
+ * deriving the socket URL from the API URL we therefore keep only the origin.
+ * Falls back to the raw value if it can't be parsed as an absolute URL.
+ */
+export function toOrigin(url: string): string {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return url;
+  }
+}
+
+/**
+ * Resolve the Socket.IO server URL. Precedence: explicit option →
+ * `NEXT_PUBLIC_SOCKET_URL` → origin of `NEXT_PUBLIC_API_URL` → localhost
+ * default. Exported for testing.
+ */
+export function resolveSocketUrl(explicit?: string): string {
+  // An explicit URL (option or NEXT_PUBLIC_SOCKET_URL) is intentional and used
+  // verbatim — the caller may deliberately target a namespace/path.
   if (explicit) return explicit;
-  const fromEnv =
+  const socketEnv =
     typeof process !== "undefined"
-      ? process.env.NEXT_PUBLIC_SOCKET_URL ?? process.env.NEXT_PUBLIC_API_URL
+      ? process.env.NEXT_PUBLIC_SOCKET_URL
       : undefined;
-  return fromEnv ?? DEFAULT_SOCKET_URL;
+  if (socketEnv) return socketEnv;
+
+  // Fall back to the API URL, but strip its `/api/v1` base path to the origin
+  // so Socket.IO doesn't treat the path as a namespace.
+  const apiEnv =
+    typeof process !== "undefined"
+      ? process.env.NEXT_PUBLIC_API_URL
+      : undefined;
+  if (apiEnv) return toOrigin(apiEnv);
+
+  return DEFAULT_SOCKET_URL;
 }
 
 export interface SocketClientOptions {
