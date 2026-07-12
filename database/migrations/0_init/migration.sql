@@ -5,7 +5,7 @@ CREATE TYPE "SubscriptionTier" AS ENUM ('free', 'standard', 'enterprise');
 CREATE TYPE "AcademicSessionStatus" AS ENUM ('planning', 'active', 'closed', 'archived');
 
 -- CreateEnum
-CREATE TYPE "UserRole" AS ENUM ('student', 'supervisor', 'coordinator', 'admin');
+CREATE TYPE "UserRole" AS ENUM ('student', 'supervisor', 'coordinator', 'hod', 'admin', 'examiner');
 
 -- CreateEnum
 CREATE TYPE "UserStatus" AS ENUM ('active', 'suspended', 'inactive');
