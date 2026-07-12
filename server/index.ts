@@ -1,3 +1,4 @@
+import { createServer as createHttpServer } from "node:http";
 import express from "express";
 import { toNodeHandler } from "better-auth/node";
 import { auth } from "./auth";
@@ -6,6 +7,7 @@ import { attachUser } from "./middleware/auth";
 import { requestLogger } from "./middleware/request-logger";
 import { rateLimit } from "./middleware/rate-limit";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler";
+import { createSocketServer } from "./websocket";
 
 /**
  * Express API server entry point.
@@ -74,7 +76,14 @@ export function createServer() {
 // Start the server when run directly.
 if (process.argv[1] && import.meta.url === `file://${process.argv[1]}`) {
   const port = Number(process.env.PORT) || 4000;
-  createServer().listen(port, () => {
-    console.log(`API server listening on http://localhost:${port}`);
+
+  // Wrap the Express app in an explicit HTTP server so the Socket.IO real-time
+  // layer can share the same listener/port as the HTTP API (per the API spec's
+  // WebSocket section — clients connect to the same origin).
+  const httpServer = createHttpServer(createServer());
+  createSocketServer(httpServer);
+
+  httpServer.listen(port, () => {
+    console.log(`API + WebSocket server listening on http://localhost:${port}`);
   });
 }
