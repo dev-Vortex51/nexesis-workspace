@@ -64,7 +64,11 @@ export function requestLogger(
       message: "request.completed",
       requestId,
       method: req.method,
-      path: req.originalUrl,
+      // Strip the query string from the stable original URL so query values
+      // (search terms, tokenized links, etc.) never reach application logs,
+      // while retaining the full path. `req.path` would be mount-relative here
+      // because Express mutates it during routing before `finish` fires.
+      path: req.originalUrl.split("?")[0],
       status: res.statusCode,
       durationMs: Math.round(durationMs * 100) / 100,
       userId: req.user?.id,

@@ -47,7 +47,7 @@ export interface ApiErrorDetail {
 
 /** The `error` object carried by an error response. */
 export interface ApiError {
-  code: ErrorCode | string;
+  code: ErrorCode;
   message: string;
   details?: ApiErrorDetail[];
 }

@@ -1,7 +1,8 @@
+import { ERROR_STATUS } from "@/shared/types/api";
 import type {
-  ApiError,
   ApiErrorDetail,
   ApiResponse,
+  ErrorCode,
   PaginationMeta,
 } from "@/shared/types/api";
 
@@ -24,12 +25,12 @@ const DEFAULT_BASE_URL = "/api/v1";
 
 /** Error thrown for any non-success outcome, mirroring the error envelope. */
 export class ApiClientError extends Error {
-  readonly code: ApiError["code"];
+  readonly code: ErrorCode;
   readonly status: number;
   readonly details?: ApiErrorDetail[];
 
   constructor(
-    code: ApiError["code"],
+    code: ErrorCode,
     message: string,
     status: number,
     details?: ApiErrorDetail[],
@@ -91,6 +92,32 @@ function withQuery(
   return qs ? `${path}?${qs}` : path;
 }
 
+/**
+ * Join a base URL and a path with exactly one separating slash, regardless of
+ * whether the base has a trailing slash or the path a leading one. Prevents
+ * both `//` and missing-slash bugs (e.g. `/api/v1` + `users`).
+ */
+function joinUrl(base: string, path: string): string {
+  return `${base.replace(/\/+$/, "")}/${path.replace(/^\/+/, "")}`;
+}
+
+/** Narrow an unknown value to the standard API envelope shape. */
+function isApiResponse(value: unknown): value is ApiResponse<unknown> {
+  if (typeof value !== "object" || value === null) return false;
+  const record = value as Record<string, unknown>;
+  if (typeof record.success !== "boolean") return false;
+  if (record.success) return true; // success:true — `data` may be any shape.
+  const error = record.error;
+  if (typeof error !== "object" || error === null) return false;
+  const err = error as Record<string, unknown>;
+  return typeof err.code === "string" && typeof err.message === "string";
+}
+
+/** True when a string is one of the spec's closed set of error codes. */
+function isErrorCode(code: string): code is ErrorCode {
+  return code in ERROR_STATUS;
+}
+
 export class ApiClient {
   private readonly baseUrl: string;
   private readonly fetchImpl: typeof fetch;
@@ -139,7 +166,7 @@ export class ApiClient {
     body?: unknown,
     options?: RequestOptions,
   ): Promise<ApiResult<T>> {
-    const url = `${this.baseUrl}${withQuery(path, options?.query)}`;
+    const url = joinUrl(this.baseUrl, withQuery(path, options?.query));
     const isJsonBody = body !== undefined;
 
     const headers: Record<string, string> = {
@@ -172,10 +199,10 @@ export class ApiClient {
 
   /** Parse a response as the standard envelope, throwing on any error shape. */
   private async parse<T>(response: Response): Promise<ApiResult<T>> {
-    let payload: ApiResponse<T> | undefined;
+    let raw: unknown;
     try {
       // A well-behaved API always returns the envelope, even for errors.
-      payload = (await response.json()) as ApiResponse<T>;
+      raw = await response.json();
     } catch {
       // Non-JSON body (gateway HTML, empty 5xx, etc.): synthesise an error.
       throw new ApiClientError(
@@ -185,13 +212,26 @@ export class ApiClient {
       );
     }
 
-    if (payload.success) {
-      return { data: payload.data, meta: payload.meta };
+    // Guard against a null, missing, or unwrapped body reaching typed callers:
+    // anything that is not a valid envelope is treated as an unexpected error.
+    if (!isApiResponse(raw)) {
+      throw new ApiClientError(
+        "INTERNAL_ERROR",
+        `Malformed API response (HTTP ${response.status})`,
+        response.status,
+      );
     }
 
-    const { error } = payload;
+    if (raw.success) {
+      return { data: raw.data as T, meta: raw.meta };
+    }
+
+    const { error } = raw;
+    // Keep ApiClientError.code within the spec's closed set; an out-of-contract
+    // code is surfaced as INTERNAL_ERROR rather than leaking to callers.
+    const code = isErrorCode(error.code) ? error.code : "INTERNAL_ERROR";
     throw new ApiClientError(
-      error.code,
+      code,
       error.message,
       response.status,
       error.details,

@@ -74,7 +74,9 @@ export function errorHandler(
       level: "error",
       message: "Unhandled API error",
       method: req.method,
-      path: req.originalUrl,
+      // Strip the query string so query values never leak; keep the full,
+      // stable path (`req.path` would be mount-relative during routing).
+      path: req.originalUrl.split("?")[0],
       requestId: req.requestId,
       userId: req.user?.id,
       error: err instanceof Error ? err.message : String(err),

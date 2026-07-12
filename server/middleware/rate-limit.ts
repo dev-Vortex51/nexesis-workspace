@@ -28,6 +28,13 @@ export interface RateLimitOptions {
    * user id, falling back to the remote IP for unauthenticated traffic.
    */
   keyGenerator?: (req: Request) => string;
+  /**
+   * Hard cap on the number of distinct keys retained in the in-memory store.
+   * Bounds memory against key churn (e.g. rotating IPs); once reached, expired
+   * entries are swept and, if still full, the oldest-expiring key is evicted
+   * before a new one is admitted. Defaults to {@link DEFAULT_MAX_KEYS}.
+   */
+  maxKeys?: number;
 }
 
 interface WindowState {
@@ -35,6 +42,9 @@ interface WindowState {
   /** Epoch ms at which the current window resets. */
   resetAt: number;
 }
+
+/** Default cap on retained keys before eviction kicks in. */
+const DEFAULT_MAX_KEYS = 10_000;
 
 /** Default key: prefer the authenticated user, else the request IP. */
 function defaultKey(req: Request): string {
@@ -48,8 +58,51 @@ function defaultKey(req: Request): string {
  * auth limiter) do not share buckets.
  */
 export function rateLimit(options: RateLimitOptions) {
-  const { windowMs, max, keyGenerator = defaultKey } = options;
+  const {
+    windowMs,
+    max,
+    keyGenerator = defaultKey,
+    maxKeys = DEFAULT_MAX_KEYS,
+  } = options;
+
+  // Fail fast on a misconfigured policy rather than silently admitting every
+  // request (max ≤ 0) or never resetting a window (windowMs ≤ 0).
+  if (!Number.isFinite(windowMs) || windowMs <= 0) {
+    throw new Error(`rateLimit: windowMs must be a positive number, got ${windowMs}`);
+  }
+  if (!Number.isSafeInteger(max) || max <= 0) {
+    throw new Error(`rateLimit: max must be a positive safe integer, got ${max}`);
+  }
+  if (!Number.isSafeInteger(maxKeys) || maxKeys <= 0) {
+    throw new Error(`rateLimit: maxKeys must be a positive safe integer, got ${maxKeys}`);
+  }
+
   const store = new Map<string, WindowState>();
+
+  /**
+   * Keep the store bounded: drop every entry whose window has already expired,
+   * then — if still at capacity — evict the entry that expires soonest so a new
+   * key can be admitted. Expired entries carry no live counter, so removing
+   * them never resets an active window.
+   */
+  function evictIfNeeded(now: number): void {
+    if (store.size < maxKeys) return;
+
+    for (const [k, s] of store) {
+      if (s.resetAt <= now) store.delete(k);
+    }
+    if (store.size < maxKeys) return;
+
+    let oldestKey: string | undefined;
+    let oldestReset = Infinity;
+    for (const [k, s] of store) {
+      if (s.resetAt < oldestReset) {
+        oldestReset = s.resetAt;
+        oldestKey = k;
+      }
+    }
+    if (oldestKey !== undefined) store.delete(oldestKey);
+  }
 
   return (req: Request, res: Response, next: NextFunction): void => {
     const now = Date.now();
@@ -57,8 +110,9 @@ export function rateLimit(options: RateLimitOptions) {
 
     let state = store.get(key);
     if (!state || state.resetAt <= now) {
-      // Start a fresh window. Opportunistically evict this key's stale state;
-      // expired entries for other keys are overwritten lazily on next hit.
+      // Start a fresh window. Bound the store before admitting a new key;
+      // expired entries for other keys are swept here and overwritten lazily.
+      if (!store.has(key)) evictIfNeeded(now);
       state = { count: 0, resetAt: now + windowMs };
       store.set(key, state);
     }

@@ -2,6 +2,7 @@ import express from "express";
 import { toNodeHandler } from "better-auth/node";
 import { auth } from "./auth";
 import authRoutes from "./routes/auth";
+import { attachUser } from "./middleware/auth";
 import { requestLogger } from "./middleware/request-logger";
 import { rateLimit } from "./middleware/rate-limit";
 import { errorHandler, notFoundHandler } from "./middleware/error-handler";
@@ -16,7 +17,9 @@ import { errorHandler, notFoundHandler } from "./middleware/error-handler";
  *      Auth reads the raw request stream.
  *   3. `express.json()` for the application's own JSON routes.
  *   4. Public health check (unauthenticated, unthrottled).
- *   5. Rate limiting scoped to the `/api/v1` application surface.
+ *   5. Best-effort `attachUser` then rate limiting, scoped to `/api/v1` — the
+ *      session is resolved first so authenticated callers are throttled per
+ *      user, not per shared IP.
  *   6. Application routes under the `/api/v1` base path from the API spec.
  *   7. `notFoundHandler` then `errorHandler` last, so unmatched routes and any
  *      uncaught error still return the standard response envelope.
@@ -49,8 +52,12 @@ export function createServer() {
   });
 
   // Throttle the application API surface (health check above is exempt).
+  // `attachUser` runs first so an authenticated caller is keyed by user id
+  // rather than a shared NAT/proxy IP — otherwise unrelated users behind one
+  // IP would drain (and 429) each other's bucket.
   app.use(
     "/api/v1",
+    attachUser,
     rateLimit({ windowMs: RATE_LIMIT_WINDOW_MS, max: RATE_LIMIT_MAX }),
   );
 

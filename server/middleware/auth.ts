@@ -72,6 +72,30 @@ export async function requireAuth(
   }
 }
 
+/**
+ * Best-effort authentication: populates `req.user` when a valid session exists
+ * but NEVER rejects — anonymous requests pass straight through. Use this ahead
+ * of middleware that must key off the authenticated principal even for public
+ * traffic (e.g. rate limiting, so authenticated users are throttled per user
+ * rather than sharing a NAT/proxy IP bucket). Route-level `requireAuth` still
+ * runs afterward to enforce access on protected endpoints.
+ */
+export async function attachUser(
+  req: Request,
+  _res: Response,
+  next: NextFunction,
+): Promise<void> {
+  try {
+    const user = await resolveSessionUser(req);
+    if (user) req.user = user;
+  } catch (error) {
+    // A resolution failure must not block the request here; downstream
+    // `requireAuth` will re-resolve and reject protected routes as needed.
+    console.error("Session resolution failed in attachUser:", error);
+  }
+  next();
+}
+
 /** True when the user holds one of the required roles. */
 export function hasRole(
   user: SessionUser,

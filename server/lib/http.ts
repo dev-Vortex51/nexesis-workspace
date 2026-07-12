@@ -4,6 +4,7 @@ import type {
   ErrorResponse,
   SuccessResponse,
 } from "../../shared/schemas/auth";
+import type { ErrorCode } from "../../shared/types/api";
 
 /**
  * Helpers for the standard API response envelope ({ success, data, error }).
@@ -24,7 +25,7 @@ export function sendSuccess<T>(
 export function sendError(
   res: Response,
   status: number,
-  code: string,
+  code: ErrorCode,
   message: string,
   details?: ErrorDetail[],
 ): void {
@@ -44,7 +45,7 @@ export class AppError extends Error {
   constructor(
     message: string,
     readonly status: number,
-    readonly code: string,
+    readonly code: ErrorCode,
   ) {
     super(message);
     this.name = new.target.name;
