@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { ZodError } from "zod";
+import { ZodError, z } from "zod";
 import { prisma } from "../lib/prisma";
 import { createSessionService } from "../services/session.service";
 import { requireAuth } from "../middleware/auth";
@@ -35,9 +35,15 @@ import {
 const router = Router();
 const sessionService = createSessionService(prisma);
 
-/** Read the `:id` route param as a plain string (Express 5 types it wider). */
+/**
+ * Parse the `:id` route param as a UUID. Session ids are UUIDs end-to-end, so a
+ * malformed value is a client error (400 VALIDATION_ERROR via `handleError`)
+ * rather than something that reaches Prisma and surfaces as a 500.
+ */
+const IdParamSchema = z.string().uuid("Invalid session id");
+
 function sessionId(req: Request): string {
-  return String(req.params.id);
+  return IdParamSchema.parse(req.params.id);
 }
 
 /** The authenticated caller's institution — the tenant scope for every query. */

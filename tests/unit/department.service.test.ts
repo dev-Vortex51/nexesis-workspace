@@ -97,6 +97,19 @@ describe("DepartmentService.create", () => {
       },
     });
   });
+
+  it("maps a DB unique violation (P2002) to ConflictError — closes the TOCTOU race", async () => {
+    // The precheck passes (concurrent create slipped in), but the database's
+    // unique constraint rejects the write; it must surface as a 409, not a 500.
+    prisma.department.findFirst.mockResolvedValue(null);
+    prisma.department.create.mockRejectedValue(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+    );
+
+    await expect(
+      service.create(INSTITUTION_ID, { name: "Comp Sci", code: "CSC" }),
+    ).rejects.toBeInstanceOf(ConflictError);
+  });
 });
 
 describe("DepartmentService.list", () => {
@@ -207,6 +220,18 @@ describe("DepartmentService.update", () => {
       service.update(INSTITUTION_ID, DEPARTMENT_ID, { code: "MEE" }),
     ).rejects.toBeInstanceOf(ConflictError);
     expect(prisma.department.update).not.toHaveBeenCalled();
+  });
+
+  it("maps a DB unique violation (P2002) on update to ConflictError", async () => {
+    prisma.department.findUnique.mockResolvedValue(baseRow);
+    prisma.department.findFirst.mockResolvedValue(null); // precheck passes
+    prisma.department.update.mockRejectedValue(
+      Object.assign(new Error("Unique constraint failed"), { code: "P2002" }),
+    );
+
+    await expect(
+      service.update(INSTITUTION_ID, DEPARTMENT_ID, { code: "MEE" }),
+    ).rejects.toBeInstanceOf(ConflictError);
   });
 
   it("throws NotFoundError when the department is not in the institution", async () => {

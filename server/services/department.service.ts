@@ -82,10 +82,11 @@ export class DepartmentService {
 
   /**
    * Create a department within the caller's institution. The code must be
-   * unique within that institution (case-insensitively) — a collision surfaces
-   * as a ConflictError. Uniqueness is enforced here rather than by a DB
-   * constraint because the data model defines none for Department.code and this
-   * unit adds no schema migration.
+   * unique within that institution (case-insensitively). Uniqueness is enforced
+   * by the database's @@unique([institutionId, code]) over a CITEXT `code`; the
+   * `assertCodeAvailable` precheck only provides a friendly early error, and the
+   * P2002 mapping closes the TOCTOU window where two concurrent creates both
+   * pass the precheck.
    */
   async create(
     institutionId: string,
@@ -93,15 +94,19 @@ export class DepartmentService {
   ): Promise<DepartmentResponse> {
     await this.assertCodeAvailable(institutionId, data.code);
 
-    const created = (await this.prisma.department.create({
-      data: {
-        institutionId,
-        name: data.name,
-        code: data.code,
-      },
-    })) as DepartmentRecord;
+    try {
+      const created = (await this.prisma.department.create({
+        data: {
+          institutionId,
+          name: data.name,
+          code: data.code,
+        },
+      })) as DepartmentRecord;
 
-    return this.toResponse(created);
+      return this.toResponse(created);
+    } catch (error) {
+      throw this.mapCodeConflict(error);
+    }
   }
 
   /**
@@ -151,12 +156,16 @@ export class DepartmentService {
     if (data.name !== undefined) updateData.name = data.name;
     if (data.code !== undefined) updateData.code = data.code;
 
-    const updated = (await this.prisma.department.update({
-      where: { id },
-      data: updateData,
-    })) as DepartmentRecord;
+    try {
+      const updated = (await this.prisma.department.update({
+        where: { id },
+        data: updateData,
+      })) as DepartmentRecord;
 
-    return this.toResponse(updated);
+      return this.toResponse(updated);
+    } catch (error) {
+      throw this.mapCodeConflict(error);
+    }
   }
 
   /**
@@ -196,9 +205,14 @@ export class DepartmentService {
   }
 
   /**
-   * Ensure no other department in the institution already uses `code`
-   * (case-insensitive). `excludeId` skips the department being updated so a
-   * no-op code change on itself is allowed.
+   * Best-effort early check that no other department in the institution already
+   * uses `code` (case-insensitive). `excludeId` skips the department being
+   * updated so a no-op code change on itself is allowed.
+   *
+   * This is a friendliness optimisation only — it can race under concurrency, so
+   * it is NOT the authority for uniqueness. The database's
+   * @@unique([institutionId, code]) is; `mapCodeConflict` turns its P2002 into
+   * the same ConflictError when two requests slip past this precheck together.
    */
   private async assertCodeAvailable(
     institutionId: string,
@@ -218,6 +232,26 @@ export class DepartmentService {
         "A department with this code already exists in this institution",
       );
     }
+  }
+
+  /**
+   * Translate the database's unique-constraint violation (P2002 on
+   * institutionId+code) into the same ConflictError the precheck raises. Any
+   * other error is rethrown unchanged. This is what actually closes the TOCTOU
+   * race between the precheck and the write.
+   */
+  private mapCodeConflict(error: unknown): unknown {
+    if (
+      error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "P2002"
+    ) {
+      return new ConflictError(
+        "A department with this code already exists in this institution",
+      );
+    }
+    return error;
   }
 
   private toResponse(row: DepartmentRecord): DepartmentResponse {

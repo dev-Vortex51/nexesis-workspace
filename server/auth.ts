@@ -43,7 +43,15 @@ export const auth = betterAuth({
       firstName: { type: "string", required: true, input: true },
       lastName: { type: "string", required: true, input: true },
       role: {
-        type: ["student", "supervisor", "coordinator", "hod", "admin", "examiner"],
+        type: [
+          "student",
+          "supervisor",
+          "coordinator",
+          "hod",
+          "admin",
+          "examiner",
+          "super_admin",
+        ],
         required: true,
         input: true,
       },

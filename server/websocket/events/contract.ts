@@ -26,9 +26,21 @@ export const SERVER_EVENTS = {
   GRADE_SUBMITTED: "grade:submitted",
 } as const;
 
-/** Client → Server event names, exactly as tabulated in the API spec. */
+/**
+ * Client → Server event names, exactly as tabulated in the API spec, plus the
+ * project room lifecycle events this server adds so an authorized participant
+ * can subscribe to a project's room without having to emit `user:typing`.
+ */
 export const CLIENT_EVENTS = {
   USER_TYPING: "user:typing",
+  // Join/leave a `project:{projectId}` room. Subscribing is what actually
+  // delivers room-scoped server events (message:new, feedback:new,
+  // document:uploaded, project:stage_changed) to a passive viewer — it must not
+  // depend on typing, which would otherwise emit a false typing signal just to
+  // receive messages. The server authorizes the join against the project before
+  // adding the socket to the room.
+  PROJECT_SUBSCRIBE: "project:subscribe",
+  PROJECT_UNSUBSCRIBE: "project:unsubscribe",
 } as const;
 
 /** Payload for `project:stage_changed` (workflow advancement). */
@@ -43,6 +55,24 @@ export interface UserTypingPayload {
   projectId: string;
   userId: string;
 }
+
+/**
+ * Payload for the project room lifecycle events (`project:subscribe` /
+ * `project:unsubscribe`): just the project to join or leave.
+ */
+export interface ProjectSubscriptionPayload {
+  projectId: string;
+}
+
+/**
+ * Acknowledgement callback the client may pass with `project:subscribe` so it
+ * learns whether the subscription was authorized (and thus whether it will
+ * receive that project's room events).
+ */
+export type SubscriptionAck = (result: {
+  ok: boolean;
+  projectId: string;
+}) => void;
 
 /**
  * Typed Server → Client event map for the Socket.IO `Server` generic. Domain
@@ -69,6 +99,13 @@ export interface ServerToClientEvents {
 /** Typed Client → Server event map for the Socket.IO `Server` generic. */
 export interface ClientToServerEvents {
   [CLIENT_EVENTS.USER_TYPING]: (payload: UserTypingPayload) => void;
+  [CLIENT_EVENTS.PROJECT_SUBSCRIBE]: (
+    payload: ProjectSubscriptionPayload,
+    ack?: SubscriptionAck,
+  ) => void;
+  [CLIENT_EVENTS.PROJECT_UNSUBSCRIBE]: (
+    payload: ProjectSubscriptionPayload,
+  ) => void;
 }
 
 /** No inter-server events are used (single-node broadcast, per the spec). */

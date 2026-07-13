@@ -6,7 +6,10 @@ import type {
   ListInstitutionsQuery,
   UpdateInstitutionRequest,
 } from "../../shared/schemas/institution";
-import { SUBSCRIPTION_TIERS } from "../../shared/schemas/institution";
+import {
+  RESERVED_SETTINGS_KEYS,
+  SUBSCRIPTION_TIERS,
+} from "../../shared/schemas/institution";
 
 /**
  * Institution service.
@@ -16,16 +19,14 @@ import { SUBSCRIPTION_TIERS } from "../../shared/schemas/institution";
  * concerns — the Prisma client is injected so the service is unit-testable in
  * isolation (mirrors AuthService).
  *
- * Soft-delete: the data model's Institution entity defines no delete column,
- * but the spec's DELETE endpoint is a soft-delete. Rather than invent a schema
- * column, the deletion marker is written into the existing `settings` JSONB
- * field under the reserved `_deletedAt` key. Reads exclude marked rows, so a
- * soft-deleted institution behaves as absent (404) while its row is preserved.
+ * Soft-delete: the DELETE endpoint is a soft-delete recorded in the dedicated
+ * `Institution.deletedAt` column (null = live). Using a column rather than a
+ * settings-JSONB marker means (a) a PATCH that replaces `settings` can never
+ * resurrect or clobber the deletion, and (b) the delete is an atomic
+ * conditional write (`updateMany where deletedAt is null`) rather than a racy
+ * read-modify-write. Reads exclude deleted rows, so a soft-deleted institution
+ * behaves as absent (404) while its row is preserved.
  */
-
-// Reserved key inside the settings JSONB that marks a soft-deleted row. Stripped
-// from every response so it never leaks into the public settings object.
-const DELETED_AT_KEY = "_deletedAt";
 
 const DEFAULT_PAGE = 1;
 const DEFAULT_LIMIT = 20;
@@ -38,6 +39,7 @@ interface InstitutionRecord {
   logoUrl: string | null;
   settings: Prisma.JsonValue;
   subscriptionTier: string;
+  deletedAt: Date | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -54,25 +56,25 @@ export class InstitutionService {
 
   /**
    * List institutions that are not soft-deleted, newest first, paginated. The
-   * soft-delete filter is applied in memory because the marker lives inside the
-   * JSONB settings field (see file header) — the row counts here are small
-   * (institutions, not per-tenant data), so this is acceptable.
+   * live filter and windowing run in the database now that soft-delete is a
+   * first-class column.
    */
   async list(query: ListInstitutionsQuery): Promise<ListInstitutionsResult> {
     const page = query.page ?? DEFAULT_PAGE;
     const limit = query.limit ?? DEFAULT_LIMIT;
 
-    const rows = (await this.prisma.institution.findMany({
-      orderBy: { createdAt: "desc" },
-    })) as InstitutionRecord[];
-
-    const live = rows.filter((row) => !this.isDeleted(row));
-    const total = live.length;
-    const start = (page - 1) * limit;
-    const paged = live.slice(start, start + limit);
+    const [rows, total] = await Promise.all([
+      this.prisma.institution.findMany({
+        where: { deletedAt: null },
+        orderBy: { createdAt: "desc" },
+        skip: (page - 1) * limit,
+        take: limit,
+      }) as Promise<InstitutionRecord[]>,
+      this.prisma.institution.count({ where: { deletedAt: null } }),
+    ]);
 
     return {
-      institutions: paged.map((row) => this.toResponse(row)),
+      institutions: rows.map((row) => this.toResponse(row)),
       page,
       limit,
       total,
@@ -84,15 +86,13 @@ export class InstitutionService {
    * body, so it defaults to the first tier ("free"). A duplicate slug (the data
    * model requires slugs to be unique) surfaces as a ConflictError.
    */
-  async create(
-    data: CreateInstitutionRequest,
-  ): Promise<InstitutionResponse> {
+  async create(data: CreateInstitutionRequest): Promise<InstitutionResponse> {
     try {
       const created = (await this.prisma.institution.create({
         data: {
           name: data.name,
           slug: data.slug,
-          settings: (data.settings ?? {}) as Prisma.InputJsonValue,
+          settings: this.sanitizeSettings(data.settings ?? {}),
           subscriptionTier: SUBSCRIPTION_TIERS[0],
         },
       })) as InstitutionRecord;
@@ -104,20 +104,23 @@ export class InstitutionService {
 
   /** Fetch a single non-deleted institution by id, or throw NotFoundError. */
   async getById(id: string): Promise<InstitutionResponse> {
-    const row = await this.requireLiveInstitution(id);
+    const row = (await this.prisma.institution.findFirst({
+      where: { id, deletedAt: null },
+    })) as InstitutionRecord | null;
+    if (!row) throw new NotFoundError("Institution not found");
     return this.toResponse(row);
   }
 
   /**
-   * Update an institution's mutable fields. Preserves the internal soft-delete
-   * marker when `settings` is replaced, so an update never resurrects the row.
+   * Update an institution's mutable fields. The write is conditional on the row
+   * still being live (`deletedAt is null`); if a concurrent softDelete() has
+   * marked it, the update matches no row and surfaces as NotFound — so an update
+   * can never race with (and silently undo) a deletion.
    */
   async update(
     id: string,
     data: UpdateInstitutionRequest,
   ): Promise<InstitutionResponse> {
-    const existing = await this.requireLiveInstitution(id);
-
     const updateData: Prisma.InstitutionUpdateInput = {};
     if (data.name !== undefined) updateData.name = data.name;
     if (data.slug !== undefined) updateData.slug = data.slug;
@@ -126,81 +129,67 @@ export class InstitutionService {
       updateData.subscriptionTier = data.subscriptionTier;
     }
     if (data.settings !== undefined) {
-      // Carry over the reserved deletion marker (absent on a live row) so a
-      // settings replacement can never clear soft-delete state as a side effect.
-      const marker = this.readMarker(existing.settings);
-      updateData.settings = {
-        ...data.settings,
-        ...(marker !== undefined ? { [DELETED_AT_KEY]: marker } : {}),
-      } as Prisma.InputJsonValue;
+      updateData.settings = this.sanitizeSettings(data.settings);
     }
 
     try {
       const updated = (await this.prisma.institution.update({
-        where: { id },
+        where: { id, deletedAt: null },
         data: updateData,
       })) as InstitutionRecord;
       return this.toResponse(updated);
     } catch (error) {
+      // A row that is missing or already soft-deleted no longer matches the
+      // `deletedAt is null` filter → P2025 (record not found) → 404.
+      if (this.isRecordNotFound(error)) {
+        throw new NotFoundError("Institution not found");
+      }
       throw this.mapUniqueViolation(error, "slug");
     }
   }
 
   /**
-   * Soft-delete an institution by stamping the reserved marker into its
-   * settings JSONB. Idempotent for the caller's purposes: a second delete of an
-   * already-deleted institution is treated as not found (the row reads as
-   * absent). Returns nothing — the route replies 200 with an empty envelope.
+   * Soft-delete an institution by stamping `deletedAt`. Atomic and idempotent:
+   * the conditional `updateMany` marks the row only while it is still live, so
+   * two concurrent deletes cannot both "succeed" — the loser matches zero rows
+   * and is treated as not found (the row already reads as absent).
    */
   async softDelete(id: string): Promise<void> {
-    const existing = await this.requireLiveInstitution(id);
-
-    const settings = this.settingsObject(existing.settings);
-    settings[DELETED_AT_KEY] = new Date().toISOString();
-
-    await this.prisma.institution.update({
-      where: { id },
-      data: { settings: settings as Prisma.InputJsonValue },
+    const { count } = await this.prisma.institution.updateMany({
+      where: { id, deletedAt: null },
+      data: { deletedAt: new Date() },
     });
+    if (count === 0) throw new NotFoundError("Institution not found");
   }
 
   // ── internals ──────────────────────────────────────────────────────────────
 
-  private async requireLiveInstitution(
-    id: string,
-  ): Promise<InstitutionRecord> {
-    const row = (await this.prisma.institution.findUnique({
-      where: { id },
-    })) as InstitutionRecord | null;
-    if (!row || this.isDeleted(row)) {
-      throw new NotFoundError("Institution not found");
-    }
-    return row;
+  /**
+   * Strip reserved internal keys from a client-supplied settings object before
+   * it is persisted. The schema already rejects them at the HTTP boundary; this
+   * is the defence-in-depth "again before persisting" strip for any caller that
+   * bypasses the route validation.
+   */
+  private sanitizeSettings(
+    settings: Record<string, unknown>,
+  ): Prisma.InputJsonValue {
+    const clean: Record<string, unknown> = { ...settings };
+    for (const key of RESERVED_SETTINGS_KEYS) delete clean[key];
+    return clean as Prisma.InputJsonValue;
   }
 
-  /** The settings value as a mutable plain object (defensive copy). */
-  private settingsObject(
-    settings: Prisma.JsonValue,
-  ): Record<string, unknown> {
+  /** The settings value as a plain object (defensive copy). */
+  private settingsObject(settings: Prisma.JsonValue): Record<string, unknown> {
     if (settings && typeof settings === "object" && !Array.isArray(settings)) {
       return { ...(settings as Record<string, unknown>) };
     }
     return {};
   }
 
-  /** Read the raw soft-delete marker, or undefined when the row is live. */
-  private readMarker(settings: Prisma.JsonValue): unknown {
-    return this.settingsObject(settings)[DELETED_AT_KEY];
-  }
-
-  private isDeleted(row: InstitutionRecord): boolean {
-    return this.readMarker(row.settings) !== undefined;
-  }
-
-  /** Map a row to its public response, stripping the internal delete marker. */
+  /** Map a row to its public response, stripping any reserved internal keys. */
   private toResponse(row: InstitutionRecord): InstitutionResponse {
     const settings = this.settingsObject(row.settings);
-    delete settings[DELETED_AT_KEY];
+    for (const key of RESERVED_SETTINGS_KEYS) delete settings[key];
 
     return {
       id: row.id,
@@ -213,6 +202,16 @@ export class InstitutionService {
       createdAt: row.createdAt,
       updatedAt: row.updatedAt,
     };
+  }
+
+  /** True for Prisma's "record to update not found" error (P2025). */
+  private isRecordNotFound(error: unknown): boolean {
+    return (
+      !!error &&
+      typeof error === "object" &&
+      "code" in error &&
+      (error as { code?: unknown }).code === "P2025"
+    );
   }
 
   /**

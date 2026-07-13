@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { ZodError } from "zod";
+import { ZodError, z } from "zod";
 import { prisma } from "../lib/prisma";
 import { createDepartmentService } from "../services/department.service";
 import { requireAuth } from "../middleware/auth";
@@ -32,9 +32,15 @@ import {
 const router = Router();
 const departmentService = createDepartmentService(prisma);
 
-/** Read the `:id` route param as a plain string (Express 5 types it wider). */
+/**
+ * Parse the `:id` route param as a UUID. Department ids are UUIDs end-to-end, so
+ * a malformed value is a client error (400 VALIDATION_ERROR via `handleError`)
+ * rather than something that reaches Prisma and surfaces as a 500.
+ */
+const IdParamSchema = z.string().uuid("Invalid department id");
+
 function departmentId(req: Request): string {
-  return String(req.params.id);
+  return IdParamSchema.parse(req.params.id);
 }
 
 /** The authenticated caller's institution — the tenant scope for every query. */

@@ -5,8 +5,10 @@ import {
   rooms,
   type ClientToServerEvents,
   type InterServerEvents,
+  type ProjectSubscriptionPayload,
   type ServerToClientEvents,
   type SocketData,
+  type SubscriptionAck,
   type UserTypingPayload,
 } from "./contract";
 import type { SessionUser } from "../../../shared/schemas/auth";
@@ -40,9 +42,9 @@ type AppSocket = Socket<
  *   - `user:{userId}`             — personal notifications
  *   - `institution:{institutionId}` — institution-wide announcements
  *
- * The `project:{projectId}` room is per-project and is joined lazily when the
- * socket first interacts with a project (see the typing handler), since the
- * spec defines no standalone project-join event.
+ * The `project:{projectId}` room is per-project and is joined explicitly via
+ * the `project:subscribe` event (see `handleProjectSubscribe`) once the socket
+ * is authorized for that project — independent of whether the user ever types.
  */
 function joinBaseRooms(socket: AppSocket): void {
   const { id: userId, institutionId } = socket.data.user;
@@ -117,15 +119,67 @@ export async function canAccessProject(
 }
 
 /**
+ * Extract a valid `projectId` from a project-scoped payload, or `null` when the
+ * payload is malformed (so handlers can drop it rather than throw across the
+ * socket boundary).
+ */
+function readProjectId(
+  payload: ProjectSubscriptionPayload | UserTypingPayload | undefined,
+): string | null {
+  if (!payload || typeof payload.projectId !== "string") return null;
+  return payload.projectId;
+}
+
+/**
+ * Subscribe a socket to a `project:{projectId}` room after authorizing its
+ * principal against the project (existence, tenant, and role-based access — see
+ * `canAccessProject`). This is the authorized subscription lifecycle: it is how
+ * a participant — including a passive viewer who never types — starts receiving
+ * that project's room events (message:new, feedback:new, document:uploaded,
+ * project:stage_changed).
+ *
+ * An unknown or unauthorized project is silently not joined; the optional ack
+ * reports the outcome so the client knows whether it is subscribed, without
+ * leaking whether the project exists.
+ */
+async function handleProjectSubscribe(
+  socket: AppSocket,
+  payload: ProjectSubscriptionPayload,
+  ack?: SubscriptionAck,
+): Promise<void> {
+  const projectId = readProjectId(payload);
+  if (!projectId) {
+    ack?.({ ok: false, projectId: "" });
+    return;
+  }
+
+  const allowed = await canAccessProject(socket.data.user, projectId);
+  if (allowed) socket.join(rooms.project(projectId));
+
+  ack?.({ ok: allowed, projectId });
+}
+
+/**
+ * Unsubscribe a socket from a project room. Leaving needs no authorization —
+ * a socket may always drop a room it holds — and is a no-op if it was never a
+ * member.
+ */
+function handleProjectUnsubscribe(
+  socket: AppSocket,
+  payload: ProjectSubscriptionPayload,
+): void {
+  const projectId = readProjectId(payload);
+  if (!projectId) return;
+  socket.leave(rooms.project(projectId));
+}
+
+/**
  * Relay a `user:typing` indicator to the rest of a project room.
  *
- * The typing event is the only project-scoped client→server event in the spec,
- * so it doubles as the point where a participant's socket joins that project
- * room (idempotent). Before joining, the socket's principal is authorized
- * against the project (existence, tenant, and role-based access — see
- * `canAccessProject`); an unauthorized or unknown project is silently ignored,
- * so a client cannot subscribe to project-room events (messages, feedback,
- * document uploads, stage changes) for records it may not see.
+ * Typing authorizes and joins the room too (idempotent), so a client that
+ * subscribed via `project:subscribe` and one that only ever types both behave
+ * correctly; an unauthorized or unknown project is silently ignored, so a client
+ * cannot subscribe to project-room events for records it may not see.
  *
  * The socket is authoritative for `userId` — the value is taken from the
  * authenticated principal, never from the client payload, so a client cannot
@@ -135,19 +189,19 @@ async function handleUserTyping(
   socket: AppSocket,
   payload: UserTypingPayload,
 ): Promise<void> {
-  // Ignore malformed payloads rather than throwing across the socket boundary.
-  if (!payload || typeof payload.projectId !== "string") return;
+  const projectId = readProjectId(payload);
+  if (!projectId) return;
 
   // Authorize project access before joining or emitting. On any failure
   // (missing project, cross-institution, insufficient role) do nothing.
-  const allowed = await canAccessProject(socket.data.user, payload.projectId);
+  const allowed = await canAccessProject(socket.data.user, projectId);
   if (!allowed) return;
 
-  const room = rooms.project(payload.projectId);
+  const room = rooms.project(projectId);
   socket.join(room);
 
   socket.to(room).emit(CLIENT_EVENTS.USER_TYPING, {
-    projectId: payload.projectId,
+    projectId,
     userId: socket.data.user.id,
   });
 }
@@ -161,6 +215,18 @@ export function registerSocketHandlers(
   socket: AppSocket,
 ): void {
   joinBaseRooms(socket);
+
+  socket.on(CLIENT_EVENTS.PROJECT_SUBSCRIBE, (payload, ack) => {
+    // Async authorization lookup: a failure must not crash the connection.
+    void handleProjectSubscribe(socket, payload, ack).catch((error) => {
+      console.error("project:subscribe handler failed:", error);
+      ack?.({ ok: false, projectId: readProjectId(payload) ?? "" });
+    });
+  });
+
+  socket.on(CLIENT_EVENTS.PROJECT_UNSUBSCRIBE, (payload) => {
+    handleProjectUnsubscribe(socket, payload);
+  });
 
   socket.on(CLIENT_EVENTS.USER_TYPING, (payload) => {
     // The handler authorizes against the database, so it is async; a rejected

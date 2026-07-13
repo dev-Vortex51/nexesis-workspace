@@ -1,5 +1,5 @@
 import { Router, type Request, type Response } from "express";
-import { ZodError } from "zod";
+import { ZodError, z } from "zod";
 import { prisma } from "../lib/prisma";
 import { createInstitutionService } from "../services/institution.service";
 import { requireAuth } from "../middleware/auth";
@@ -21,16 +21,24 @@ import {
  *
  * Authorization: every endpoint is "super-admin only" per the spec. That is
  * enforced through the RBAC permission matrix, where the institution
- * permissions are granted to NO role and therefore fail closed until a
- * dedicated system role exists (see shared/constants/permissions.ts).
+ * permissions are granted solely to the dedicated `super_admin` role — an
+ * institution-scoped `admin` cannot manage the global registry (see
+ * shared/constants/permissions.ts).
  */
 
 const router = Router();
 const institutionService = createInstitutionService(prisma);
 
-/** Read the `:id` route param as a plain string (Express 5 types it wider). */
+/**
+ * Parse the `:id` route param as a UUID. Institution ids are UUIDs end-to-end,
+ * so a malformed value is a client error: it throws a ZodError that `handleError`
+ * maps to a 400 VALIDATION_ERROR, rather than reaching Prisma and surfacing as a
+ * 500.
+ */
+const IdParamSchema = z.string().uuid("Invalid institution id");
+
 function institutionId(req: Request): string {
-  return String(req.params.id);
+  return IdParamSchema.parse(req.params.id);
 }
 
 /** Map thrown errors to the response envelope with the right status. */
