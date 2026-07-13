@@ -3,6 +3,10 @@ import { ZodError } from "zod";
 import { auth } from "../auth";
 import { prisma } from "../lib/prisma";
 import { createUserService } from "../services/user.service";
+import {
+  AssignSupervisorRequestSchema,
+  createSupervisorService,
+} from "../services/supervisor.service";
 import { requireAuth } from "../middleware/auth";
 import { can, requireOwnership, requirePermission } from "../middleware/rbac";
 import { AppError, sendError, sendSuccess, ValidationError } from "../lib/http";
@@ -15,7 +19,8 @@ import {
 
 /**
  * User routes: the CRUD surface from the API spec's Users section —
- * GET/POST /users, GET/PATCH/DELETE /users/:id.
+ * GET/POST /users, GET/PATCH/DELETE /users/:id, plus
+ * POST /users/:id/assign-supervisor.
  *
  * Handlers stay thin — validate the request, delegate to the user service, and
  * shape the standard response envelope (mirrors the department routes).
@@ -27,6 +32,9 @@ import {
  *    user id, with USER_UPDATE_ANY as the admin bypass. Role/status changes are
  *    further restricted to admins inside the service (a self update cannot
  *    escalate its own role).
+ *  - POST /users/:id/assign-supervisor is "coordinator/admin" →
+ *    USER_ASSIGN_SUPERVISOR permission; the assignment mechanics live in the
+ *    supervisor service (unit 1.5).
  *  - GET /users and GET /users/:id carry no role annotation, so they require
  *    only authentication; every service call is scoped to the caller's
  *    institutionId (from the session), enforcing tenant isolation — a user in
@@ -35,6 +43,7 @@ import {
 
 const router = Router();
 const userService = createUserService(auth, prisma);
+const supervisorService = createSupervisorService(prisma);
 
 /** Read the `:id` route param as a plain string (Express 5 types it wider). */
 function userId(req: Request): string {
@@ -158,6 +167,28 @@ router.delete(
         userId(req),
       );
       sendSuccess(res, user, 200);
+    } catch (error) {
+      handleError(res, error);
+    }
+  },
+);
+
+// POST /users/:id/assign-supervisor — assign supervisor to a student
+// (coordinator/admin). The `:id` is the student; the body carries the
+// supervisor. All entities are resolved within the caller's institution.
+router.post(
+  "/:id/assign-supervisor",
+  requireAuth,
+  requirePermission(PERMISSIONS.USER_ASSIGN_SUPERVISOR),
+  async (req: Request, res: Response) => {
+    try {
+      const { supervisorId } = AssignSupervisorRequestSchema.parse(req.body);
+      const result = await supervisorService.assignToStudent(
+        callerInstitutionId(req),
+        userId(req),
+        supervisorId,
+      );
+      sendSuccess(res, result, 200);
     } catch (error) {
       handleError(res, error);
     }
