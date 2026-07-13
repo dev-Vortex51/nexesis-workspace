@@ -54,8 +54,15 @@ export const PERMISSIONS = {
   // Departments
   DEPARTMENT_CREATE: "department:create", // POST /departments — admin only
 
-  // Academic sessions
+  // Academic sessions. The spec annotates POST /sessions as "coordinator/admin";
+  // this unit's scope ("Enforce Coordinator and Admin authorization") extends the
+  // same gate to the other session management writes (update, and the activate/
+  // close state transitions). Reads (GET /sessions, GET /sessions/:id) carry no
+  // role annotation and stay authenticated + tenant-scoped, like departments.
   SESSION_CREATE: "session:create", // POST /sessions — coordinator/admin
+  SESSION_UPDATE: "session:update", // PATCH /sessions/:id — coordinator/admin
+  SESSION_ACTIVATE: "session:activate", // POST /sessions/:id/activate — coordinator/admin
+  SESSION_CLOSE: "session:close", // POST /sessions/:id/close — coordinator/admin
 
   // Projects
   PROJECT_CREATE: "project:create", // POST /projects — coordinator (student self-register is conditional)
@@ -111,6 +118,9 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     // "coordinator/admin" and coordinator-only workflow actions.
     P.USER_ASSIGN_SUPERVISOR,
     P.SESSION_CREATE,
+    P.SESSION_UPDATE,
+    P.SESSION_ACTIVATE,
+    P.SESSION_CLOSE,
     P.PROJECT_CREATE,
     P.PROJECT_SCHEDULE_DEFENSE,
     P.PROJECT_COMPLETE,
@@ -133,6 +143,9 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     // does not define, so they fail closed (see file header).
     P.DEPARTMENT_CREATE,
     P.SESSION_CREATE,
+    P.SESSION_UPDATE,
+    P.SESSION_ACTIVATE,
+    P.SESSION_CLOSE,
     P.PROJECT_CREATE,
     P.DOCUMENT_VIEW_DELETED,
     P.DOCUMENT_RESTORE,

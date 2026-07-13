@@ -5,6 +5,7 @@ import { auth } from "./auth";
 import authRoutes from "./routes/auth";
 import institutionRoutes from "./routes/institutions";
 import departmentRoutes from "./routes/departments";
+import sessionRoutes from "./routes/sessions";
 import { attachUser } from "./middleware/auth";
 import { requestLogger } from "./middleware/request-logger";
 import { rateLimit } from "./middleware/rate-limit";
@@ -68,6 +69,7 @@ export function createServer() {
   app.use("/api/v1/auth", authRoutes);
   app.use("/api/v1/institutions", institutionRoutes);
   app.use("/api/v1/departments", departmentRoutes);
+  app.use("/api/v1/sessions", sessionRoutes);
 
   // Terminal handlers: unmatched route → 404 envelope; anything thrown →
   // mapped error envelope. Must be registered after all routes.
