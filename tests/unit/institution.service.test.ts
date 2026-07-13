@@ -10,8 +10,9 @@ import type {
 /**
  * Unit tests for InstitutionService. The Prisma client is fully mocked so the
  * service's own logic (subscriptionTier defaulting, unique-slug → conflict
- * mapping, the settings-JSONB soft-delete marker, and its exclusion from reads
- * and responses) is exercised in isolation (mirrors the AuthService tests).
+ * mapping, the dedicated-column soft-delete with atomic conditional writes, and
+ * the reserved-key stripping) is exercised in isolation (mirrors the AuthService
+ * tests).
  */
 
 const INSTITUTION_ID = "11111111-1111-1111-1111-111111111111";
@@ -23,6 +24,7 @@ const baseRow = {
   logoUrl: null as string | null,
   settings: {} as Record<string, unknown>,
   subscriptionTier: "free",
+  deletedAt: null as Date | null,
   createdAt: new Date("2026-01-01T00:00:00Z"),
   updatedAt: new Date("2026-01-01T00:00:00Z"),
 };
@@ -36,16 +38,20 @@ function makePrisma() {
   return {
     institution: {
       findMany: vi.fn(),
-      findUnique: vi.fn(),
+      findFirst: vi.fn(),
+      count: vi.fn(),
       create: vi.fn(),
       update: vi.fn(),
+      updateMany: vi.fn(),
     },
   } as unknown as PrismaClient & {
     institution: {
       findMany: ReturnType<typeof vi.fn>;
-      findUnique: ReturnType<typeof vi.fn>;
+      findFirst: ReturnType<typeof vi.fn>;
+      count: ReturnType<typeof vi.fn>;
       create: ReturnType<typeof vi.fn>;
       update: ReturnType<typeof vi.fn>;
+      updateMany: ReturnType<typeof vi.fn>;
     };
   };
 }
@@ -55,6 +61,13 @@ function uniqueViolation() {
   return Object.assign(new Error("Unique constraint failed"), {
     code: "P2002",
     meta: { target: ["slug"] },
+  });
+}
+
+/** A Prisma P2025 "record to update not found" error. */
+function recordNotFound() {
+  return Object.assign(new Error("Record to update not found"), {
+    code: "P2025",
   });
 }
 
@@ -98,6 +111,19 @@ describe("InstitutionService.create", () => {
     expect(result.settings).toEqual(settings);
   });
 
+  it("strips a reserved _deletedAt key before persisting settings", async () => {
+    prisma.institution.create.mockResolvedValue(baseRow);
+
+    await service.create({
+      ...createInput,
+      settings: { theme: "dark", _deletedAt: "2026-02-01T00:00:00Z" } as never,
+    });
+
+    const call = prisma.institution.create.mock.calls[0][0];
+    expect(call.data.settings).toEqual({ theme: "dark" });
+    expect(call.data.settings).not.toHaveProperty("_deletedAt");
+  });
+
   it("maps a duplicate-slug P2002 violation to ConflictError", async () => {
     prisma.institution.create.mockRejectedValue(uniqueViolation());
 
@@ -115,83 +141,78 @@ describe("InstitutionService.create", () => {
 });
 
 describe("InstitutionService.getById", () => {
-  it("returns a live institution", async () => {
-    prisma.institution.findUnique.mockResolvedValue(baseRow);
+  it("returns a live institution (filtered on deletedAt: null)", async () => {
+    prisma.institution.findFirst.mockResolvedValue(baseRow);
 
     const result = await service.getById(INSTITUTION_ID);
 
     expect(result.id).toBe(INSTITUTION_ID);
-    expect(prisma.institution.findUnique).toHaveBeenCalledWith({
-      where: { id: INSTITUTION_ID },
+    expect(prisma.institution.findFirst).toHaveBeenCalledWith({
+      where: { id: INSTITUTION_ID, deletedAt: null },
     });
   });
 
-  it("throws NotFoundError for an unknown id", async () => {
-    prisma.institution.findUnique.mockResolvedValue(null);
+  it("throws NotFoundError when no live row matches", async () => {
+    prisma.institution.findFirst.mockResolvedValue(null);
 
     await expect(service.getById(INSTITUTION_ID)).rejects.toBeInstanceOf(
       NotFoundError,
     );
   });
 
-  it("treats a soft-deleted institution as not found", async () => {
-    prisma.institution.findUnique.mockResolvedValue({
+  it("strips a reserved key that somehow lingers in stored settings", async () => {
+    prisma.institution.findFirst.mockResolvedValue({
       ...baseRow,
-      settings: { _deletedAt: "2026-02-01T00:00:00Z" },
-    });
-
-    await expect(service.getById(INSTITUTION_ID)).rejects.toBeInstanceOf(
-      NotFoundError,
-    );
-  });
-
-  it("strips the internal delete marker from the response settings", async () => {
-    prisma.institution.findUnique.mockResolvedValue({
-      ...baseRow,
-      settings: { theme: "light", _internal: true },
+      settings: { theme: "light", _deletedAt: "x" },
     });
 
     const result = await service.getById(INSTITUTION_ID);
 
-    expect(result.settings).toEqual({ theme: "light", _internal: true });
+    expect(result.settings).toEqual({ theme: "light" });
     expect(result.settings).not.toHaveProperty("_deletedAt");
   });
 });
 
 describe("InstitutionService.list", () => {
-  it("excludes soft-deleted rows and paginates the live set", async () => {
+  it("filters and paginates live rows in the database", async () => {
     prisma.institution.findMany.mockResolvedValue([
       { ...baseRow, id: "a", slug: "a" },
-      {
-        ...baseRow,
-        id: "b",
-        slug: "b",
-        settings: { _deletedAt: "2026-02-01T00:00:00Z" },
-      },
       { ...baseRow, id: "c", slug: "c" },
     ]);
+    prisma.institution.count.mockResolvedValue(2);
 
     const result = await service.list({ page: 1, limit: 20 });
 
+    expect(prisma.institution.findMany).toHaveBeenCalledWith({
+      where: { deletedAt: null },
+      orderBy: { createdAt: "desc" },
+      skip: 0,
+      take: 20,
+    });
+    expect(prisma.institution.count).toHaveBeenCalledWith({
+      where: { deletedAt: null },
+    });
     expect(result.total).toBe(2);
     expect(result.institutions.map((i) => i.id)).toEqual(["a", "c"]);
   });
 
-  it("applies page/limit windowing over the live rows", async () => {
-    prisma.institution.findMany.mockResolvedValue(
-      ["a", "b", "c", "d", "e"].map((id) => ({ ...baseRow, id, slug: id })),
-    );
+  it("applies page/limit windowing (skip/take)", async () => {
+    prisma.institution.findMany.mockResolvedValue([]);
+    prisma.institution.count.mockResolvedValue(5);
 
     const result = await service.list({ page: 2, limit: 2 });
 
+    expect(prisma.institution.findMany).toHaveBeenCalledWith(
+      expect.objectContaining({ skip: 2, take: 2 }),
+    );
     expect(result.total).toBe(5);
     expect(result.page).toBe(2);
     expect(result.limit).toBe(2);
-    expect(result.institutions.map((i) => i.id)).toEqual(["c", "d"]);
   });
 
   it("defaults to page 1, limit 20 when omitted", async () => {
     prisma.institution.findMany.mockResolvedValue([baseRow]);
+    prisma.institution.count.mockResolvedValue(1);
 
     const result = await service.list({});
 
@@ -202,37 +223,31 @@ describe("InstitutionService.list", () => {
 });
 
 describe("InstitutionService.update", () => {
-  it("updates only the provided fields", async () => {
-    prisma.institution.findUnique.mockResolvedValue(baseRow);
-    prisma.institution.update.mockResolvedValue({
-      ...baseRow,
-      name: "Renamed",
-    });
+  it("updates only the provided fields, conditional on the row being live", async () => {
+    prisma.institution.update.mockResolvedValue({ ...baseRow, name: "Renamed" });
 
     await service.update(INSTITUTION_ID, { name: "Renamed" });
 
     expect(prisma.institution.update).toHaveBeenCalledWith({
-      where: { id: INSTITUTION_ID },
+      where: { id: INSTITUTION_ID, deletedAt: null },
       data: { name: "Renamed" },
     });
   });
 
-  it("preserves the soft-delete marker when settings are replaced", async () => {
-    // A live row never carries the marker, but guard the invariant regardless:
-    // a settings replacement must not resurrect a soft-deleted row. Here the
-    // existing row is live, so no marker is carried.
-    prisma.institution.findUnique.mockResolvedValue(baseRow);
+  it("strips a reserved _deletedAt key from replaced settings", async () => {
     prisma.institution.update.mockResolvedValue(baseRow);
 
-    await service.update(INSTITUTION_ID, { settings: { a: 1 } });
+    await service.update(INSTITUTION_ID, {
+      settings: { a: 1, _deletedAt: "x" } as never,
+    });
 
     const call = prisma.institution.update.mock.calls[0][0];
     expect(call.data.settings).toEqual({ a: 1 });
     expect(call.data.settings).not.toHaveProperty("_deletedAt");
   });
 
-  it("throws NotFoundError when the institution does not exist", async () => {
-    prisma.institution.findUnique.mockResolvedValue(null);
+  it("throws NotFoundError when the row is missing or already deleted (P2025)", async () => {
+    prisma.institution.update.mockRejectedValue(recordNotFound());
 
     await expect(
       service.update(INSTITUTION_ID, { name: "X" } as UpdateInstitutionRequest),
@@ -240,7 +255,6 @@ describe("InstitutionService.update", () => {
   });
 
   it("maps a duplicate-slug P2002 violation to ConflictError", async () => {
-    prisma.institution.findUnique.mockResolvedValue(baseRow);
     prisma.institution.update.mockRejectedValue(uniqueViolation());
 
     await expect(
@@ -250,39 +264,21 @@ describe("InstitutionService.update", () => {
 });
 
 describe("InstitutionService.softDelete", () => {
-  it("stamps the delete marker into settings without removing the row", async () => {
-    prisma.institution.findUnique.mockResolvedValue({
-      ...baseRow,
-      settings: { theme: "dark" },
-    });
-    prisma.institution.update.mockResolvedValue(baseRow);
+  it("stamps deletedAt atomically, only while the row is live", async () => {
+    prisma.institution.updateMany.mockResolvedValue({ count: 1 });
 
     await service.softDelete(INSTITUTION_ID);
 
-    const call = prisma.institution.update.mock.calls[0][0];
-    expect(call.where).toEqual({ id: INSTITUTION_ID });
-    expect(call.data.settings).toHaveProperty("_deletedAt");
-    // existing settings are preserved alongside the marker
-    expect(call.data.settings.theme).toBe("dark");
+    const call = prisma.institution.updateMany.mock.calls[0][0];
+    expect(call.where).toEqual({ id: INSTITUTION_ID, deletedAt: null });
+    expect(call.data.deletedAt).toBeInstanceOf(Date);
   });
 
-  it("throws NotFoundError for an unknown institution", async () => {
-    prisma.institution.findUnique.mockResolvedValue(null);
+  it("throws NotFoundError when no live row is affected (unknown or already deleted)", async () => {
+    prisma.institution.updateMany.mockResolvedValue({ count: 0 });
 
     await expect(service.softDelete(INSTITUTION_ID)).rejects.toBeInstanceOf(
       NotFoundError,
     );
-  });
-
-  it("treats an already soft-deleted institution as not found", async () => {
-    prisma.institution.findUnique.mockResolvedValue({
-      ...baseRow,
-      settings: { _deletedAt: "2026-02-01T00:00:00Z" },
-    });
-
-    await expect(service.softDelete(INSTITUTION_ID)).rejects.toBeInstanceOf(
-      NotFoundError,
-    );
-    expect(prisma.institution.update).not.toHaveBeenCalled();
   });
 });

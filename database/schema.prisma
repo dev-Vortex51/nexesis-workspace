@@ -1,10 +1,15 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  // `citext` backs the case-insensitive unique department code
+  // (Department.code): the (institutionId, code) unique constraint then
+  // enforces uniqueness case-insensitively at the database layer.
+  extensions = [citext]
 }
 
 enum SubscriptionTier {
@@ -27,6 +32,10 @@ enum UserRole {
   hod
   admin
   examiner
+  // System-level principal for the global, cross-tenant institution registry
+  // (GET/POST/PATCH/DELETE /institutions). Distinct from `admin`, which is
+  // scoped to a single institution — see shared/constants/permissions.ts.
+  super_admin
 }
 
 enum UserStatus {
@@ -158,6 +167,11 @@ model Institution {
   logoUrl          String?
   settings         Json
   subscriptionTier SubscriptionTier
+  // Soft-delete marker. A dedicated column (not a settings key) so a PATCH that
+  // replaces `settings` can never resurrect or clobber the deletion, and so
+  // deletion state is enforced with an atomic conditional write rather than a
+  // read-modify-write over JSONB. Null = live; non-null = soft-deleted.
+  deletedAt        DateTime?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
 
@@ -175,7 +189,10 @@ model Department {
   id            String   @id @default(uuid()) @db.Uuid
   institutionId String   @db.Uuid
   name          String
-  code          String
+  // Case-insensitive: `citext` + the @@unique below make (institutionId, code)
+  // unique regardless of letter case, enforced by the database rather than an
+  // application-level precheck (which is racy under concurrency).
+  code          String   @db.Citext
   createdAt     DateTime @default(now())
 
   institution   Institution    @relation(fields: [institutionId], references: [id])
@@ -183,6 +200,8 @@ model Department {
   projects      Project[]
   rubrics       Rubric[]
   announcements Announcement[]
+
+  @@unique([institutionId, code])
 }
 
 model AcademicSession {

@@ -17,6 +17,10 @@ export const USER_ROLES = [
   "hod",
   "admin",
   "examiner",
+  // System-level principal for the global, cross-tenant institution registry.
+  // Distinct from `admin` (scoped to one institution) — see the RBAC matrix in
+  // shared/constants/permissions.ts.
+  "super_admin",
 ] as const;
 
 export const USER_STATUSES = ["active", "suspended", "inactive"] as const;

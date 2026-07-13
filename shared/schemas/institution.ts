@@ -28,15 +28,43 @@ export const InstitutionSlugSchema = z
     "Slug must be lowercase alphanumeric words separated by single hyphens",
   );
 
-// The settings JSONB field: an arbitrary institution-specific config object.
-export const InstitutionSettingsSchema = z.record(z.string(), z.unknown());
+// The reserved settings key that historically marked a soft-deleted row. Soft
+// delete now lives in a dedicated column, but the key stays reserved: a client
+// must never be able to write it, so it is rejected at the schema boundary
+// (and stripped again in the service before persisting) — otherwise a public
+// create/PATCH could smuggle internal state into the settings JSONB.
+export const RESERVED_SETTINGS_KEYS = ["_deletedAt"] as const;
+
+// The settings JSONB field: an arbitrary institution-specific config object,
+// minus the reserved internal keys above.
+export const InstitutionSettingsSchema = z
+  .record(z.string(), z.unknown())
+  .superRefine((settings, ctx) => {
+    for (const key of RESERVED_SETTINGS_KEYS) {
+      if (Object.prototype.hasOwnProperty.call(settings, key)) {
+        ctx.addIssue({
+          code: "custom",
+          path: [key],
+          message: `"${key}" is a reserved key and cannot be set`,
+        });
+      }
+    }
+  });
+
+// Institution name: trimmed so whitespace-only input (" ") is rejected rather
+// than passing a bare min(1) check, and length-bounded like the other entities.
+export const InstitutionNameSchema = z
+  .string()
+  .trim()
+  .min(1, "Name is required")
+  .max(200, "Name must be at most 200 characters");
 
 // POST /institutions — body per the API spec: { name, slug, settings }.
 // subscriptionTier is not part of the create body (the spec omits it); the
 // service defaults it to the first tier, "free".
 export const CreateInstitutionRequestSchema = z
   .object({
-    name: z.string().min(1, "Name is required"),
+    name: InstitutionNameSchema,
     slug: InstitutionSlugSchema,
     settings: InstitutionSettingsSchema.optional(),
   })
@@ -50,7 +78,7 @@ export type CreateInstitutionRequest = z.infer<
 // columns. All fields optional; unknown keys rejected.
 export const UpdateInstitutionRequestSchema = z
   .object({
-    name: z.string().min(1, "Name is required").optional(),
+    name: InstitutionNameSchema.optional(),
     slug: InstitutionSlugSchema.optional(),
     logoUrl: z.string().nullable().optional(),
     settings: InstitutionSettingsSchema.optional(),

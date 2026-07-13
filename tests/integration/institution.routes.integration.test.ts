@@ -10,11 +10,12 @@ import { USER_ROLES } from "../../shared/schemas/auth";
  * Integration tests for the institution CRUD routes (unit 1.1).
  *
  * The real institution router is mounted over the real auth + RBAC stack and
- * driven end-to-end with a live session cookie for each User.role value. The
- * API spec restricts every institution endpoint to "super-admin"; no User.role
- * maps to super-admin, so the permission matrix fails closed. These tests prove
- * that: every authenticated role is forbidden (403), unauthenticated is 401,
- * and request validation still runs at the boundary.
+ * driven end-to-end with a live session cookie for each User.role value. The API
+ * spec restricts every institution endpoint to "super-admin"; that is now the
+ * dedicated `super_admin` role. These tests prove: every non-super-admin role
+ * (incl. admin) is forbidden (403), unauthenticated is 401, a super_admin can
+ * drive the full CRUD lifecycle, and boundary validation (UUID :id param,
+ * reserved settings key) still runs.
  *
  * Skips automatically when Postgres is unreachable so unit runs stay green in
  * environments without a database (same pattern as the RBAC integration test).
@@ -37,6 +38,7 @@ const stamp = Date.now();
 
 const cookies: Record<string, string> = {};
 const seededUserIds: string[] = [];
+const createdInstitutionIds: string[] = [];
 let institutionId: string;
 
 function createTestApp() {
@@ -137,9 +139,14 @@ afterAll(async () => {
   await prisma.session.deleteMany({ where: { userId: { in: seededUserIds } } });
   await prisma.account.deleteMany({ where: { userId: { in: seededUserIds } } });
   await prisma.user.deleteMany({ where: { id: { in: seededUserIds } } });
-  await prisma.institution.deleteMany({ where: { id: institutionId } });
+  await prisma.institution.deleteMany({
+    where: { id: { in: [institutionId, ...createdInstitutionIds] } },
+  });
   await new Promise<void>((resolve) => server.close(() => resolve()));
 });
+
+// Every role except the dedicated system principal.
+const NON_SUPER_ROLES = USER_ROLES.filter((r) => r !== "super_admin");
 
 describe("Institution routes — authentication gate", () => {
   it.runIf(dbAvailable)("rejects unauthenticated list (401)", async () => {
@@ -157,16 +164,12 @@ describe("Institution routes — authentication gate", () => {
   });
 });
 
-describe("Institution routes — super-admin authorization (fails closed)", () => {
+describe("Institution routes — authorization (super-admin only)", () => {
   it.runIf(dbAvailable)(
-    "forbids GET /institutions for every role (403)",
+    "forbids GET /institutions for every non-super-admin role incl. admin (403)",
     async () => {
-      for (const role of USER_ROLES) {
-        const { status, json } = await req(
-          "GET",
-          "/institutions",
-          cookies[role],
-        );
+      for (const role of NON_SUPER_ROLES) {
+        const { status, json } = await req("GET", "/institutions", cookies[role]);
         expect(status, `role=${role}`).toBe(403);
         expect(json.error.code).toBe("FORBIDDEN");
       }
@@ -174,9 +177,9 @@ describe("Institution routes — super-admin authorization (fails closed)", () =
   );
 
   it.runIf(dbAvailable)(
-    "forbids POST /institutions for every role incl. admin (403)",
+    "forbids POST /institutions for every non-super-admin role incl. admin (403)",
     async () => {
-      for (const role of USER_ROLES) {
+      for (const role of NON_SUPER_ROLES) {
         const { status } = await req("POST", "/institutions", cookies[role], {
           name: "Blocked",
           slug: "blocked",
@@ -187,39 +190,116 @@ describe("Institution routes — super-admin authorization (fails closed)", () =
   );
 
   it.runIf(dbAvailable)(
-    "forbids GET /institutions/:id for admin (403)",
+    "forbids the mutating :id routes for admin (403)",
     async () => {
-      const { status } = await req(
-        "GET",
-        `/institutions/${institutionId}`,
-        cookies.admin,
-      );
-      expect(status).toBe(403);
-    },
-  );
-
-  it.runIf(dbAvailable)(
-    "forbids PATCH /institutions/:id for admin (403)",
-    async () => {
-      const { status } = await req(
+      const patch = await req(
         "PATCH",
         `/institutions/${institutionId}`,
         cookies.admin,
         { name: "Renamed" },
       );
-      expect(status).toBe(403);
-    },
-  );
+      expect(patch.status).toBe(403);
 
-  it.runIf(dbAvailable)(
-    "forbids DELETE /institutions/:id for admin (403)",
-    async () => {
-      const { status } = await req(
+      const del = await req(
         "DELETE",
         `/institutions/${institutionId}`,
         cookies.admin,
       );
-      expect(status).toBe(403);
+      expect(del.status).toBe(403);
+    },
+  );
+});
+
+describe("Institution routes — super_admin CRUD lifecycle", () => {
+  it.runIf(dbAvailable)("creates, reads, updates, and soft-deletes", async () => {
+    // Create
+    const created = await req("POST", "/institutions", cookies.super_admin, {
+      name: "Super Created",
+      slug: `super-created-${stamp}`,
+      settings: { theme: "dark" },
+    });
+    expect(created.status).toBe(201);
+    const id = created.json.data.id;
+    createdInstitutionIds.push(id);
+
+    // Read (list + detail)
+    const list = await req("GET", "/institutions", cookies.super_admin);
+    expect(list.status).toBe(200);
+    expect(list.json.data.map((i: any) => i.id)).toContain(id);
+
+    const detail = await req(
+      "GET",
+      `/institutions/${id}`,
+      cookies.super_admin,
+    );
+    expect(detail.status).toBe(200);
+    expect(detail.json.data.settings).toEqual({ theme: "dark" });
+
+    // Update
+    const patched = await req(
+      "PATCH",
+      `/institutions/${id}`,
+      cookies.super_admin,
+      { name: "Super Renamed" },
+    );
+    expect(patched.status).toBe(200);
+    expect(patched.json.data.name).toBe("Super Renamed");
+
+    // Soft-delete → subsequently reads as absent (404)
+    const deleted = await req(
+      "DELETE",
+      `/institutions/${id}`,
+      cookies.super_admin,
+    );
+    expect(deleted.status).toBe(200);
+
+    const gone = await req("GET", `/institutions/${id}`, cookies.super_admin);
+    expect(gone.status).toBe(404);
+    expect(gone.json.error.code).toBe("NOT_FOUND");
+  });
+
+  it.runIf(dbAvailable)(
+    "rejects a reserved _deletedAt settings key (400)",
+    async () => {
+      const { status, json } = await req(
+        "POST",
+        "/institutions",
+        cookies.super_admin,
+        {
+          name: "Reserved Key",
+          slug: `reserved-${stamp}`,
+          settings: { _deletedAt: "2026-02-01T00:00:00Z" },
+        },
+      );
+      expect(status).toBe(400);
+      expect(json.error.code).toBe("VALIDATION_ERROR");
+    },
+  );
+
+  it.runIf(dbAvailable)(
+    "rejects a whitespace-only name (400)",
+    async () => {
+      const { status, json } = await req(
+        "POST",
+        "/institutions",
+        cookies.super_admin,
+        { name: "   ", slug: `ws-${stamp}` },
+      );
+      expect(status).toBe(400);
+      expect(json.error.code).toBe("VALIDATION_ERROR");
+    },
+  );
+
+  it.runIf(dbAvailable)(
+    "returns 400 (not 500) for a non-UUID :id",
+    async () => {
+      const { status, json } = await req(
+        "GET",
+        "/institutions/not-a-uuid",
+        cookies.super_admin,
+      );
+      expect(status).toBe(400);
+      expect(json.error.code).toBe("VALIDATION_ERROR");
     },
   );
 });

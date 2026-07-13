@@ -10,18 +10,18 @@ import { USER_ROLES } from "../schemas/auth";
  * only by resource ownership) are intentionally absent: they are enforced by
  * `requireAuth` + ownership checks, not by this static matrix.
  *
- * The matrix is keyed by the six roles defined in the data model
+ * The matrix is keyed by the seven roles defined in the data model
  * (04-data-model.md → User.role): student, supervisor, coordinator, hod,
- * admin, examiner. Roles with no elevated grants (hod, examiner) still key the
- * matrix with an empty set — they reach non-role-gated routes normally.
+ * admin, examiner, super_admin. Roles with no elevated grants (hod, examiner)
+ * still key the matrix with an empty set — they reach non-role-gated routes
+ * normally.
  *
  * Note on "super-admin": the API spec labels the institution-management
- * endpoints "super-admin only", but no super-admin value exists in the
- * User.role enum. Rather than widen these to `admin` — which would let any
- * institutional admin manage the global institution registry — the
- * corresponding permissions are granted to NO role and therefore fail closed:
- * `requirePermission` rejects everyone until a dedicated system role is
- * introduced. No new role is invented here.
+ * endpoints "super-admin only". That principal is the dedicated `super_admin`
+ * role (distinct from `admin`, which is scoped to a single institution) — it,
+ * and only it, is granted the INSTITUTION_* permissions below. Widening them to
+ * `admin` would let any institutional admin manage the global institution
+ * registry, so it is deliberately avoided.
  */
 
 export type UserRole = (typeof USER_ROLES)[number];
@@ -40,11 +40,11 @@ export const PERMISSIONS = {
   USER_SUSPEND: "user:suspend", // DELETE /users/:id — admin only
   USER_ASSIGN_SUPERVISOR: "user:assign-supervisor", // POST /users/:id/assign-supervisor — coordinator/admin
 
-  // Institutions (spec: "super-admin only"). No User.role value maps to
-  // super-admin, so these are granted to NO role and fail closed until a
-  // dedicated system role exists — see the file header. The institution
-  // registry is a global, cross-tenant resource, so its detail read, update,
-  // and soft-delete are gated the same way as list/create.
+  // Institutions (spec: "super-admin only"). Granted to the dedicated
+  // `super_admin` role only — no User.role scoped to a single institution maps
+  // to super-admin, so `admin` is intentionally excluded (see the file header).
+  // The institution registry is a global, cross-tenant resource, so its detail
+  // read, update, and soft-delete are gated the same way as list/create.
   INSTITUTION_LIST: "institution:list", // GET /institutions
   INSTITUTION_CREATE: "institution:create", // POST /institutions
   INSTITUTION_GET: "institution:get", // GET /institutions/:id
@@ -54,8 +54,15 @@ export const PERMISSIONS = {
   // Departments
   DEPARTMENT_CREATE: "department:create", // POST /departments — admin only
 
-  // Academic sessions
+  // Academic sessions. The spec annotates POST /sessions as "coordinator/admin";
+  // this unit's scope ("Enforce Coordinator and Admin authorization") extends the
+  // same gate to the other session management writes (update, and the activate/
+  // close state transitions). Reads (GET /sessions, GET /sessions/:id) carry no
+  // role annotation and stay authenticated + tenant-scoped, like departments.
   SESSION_CREATE: "session:create", // POST /sessions — coordinator/admin
+  SESSION_UPDATE: "session:update", // PATCH /sessions/:id — coordinator/admin
+  SESSION_ACTIVATE: "session:activate", // POST /sessions/:id/activate — coordinator/admin
+  SESSION_CLOSE: "session:close", // POST /sessions/:id/close — coordinator/admin
 
   // Projects
   PROJECT_CREATE: "project:create", // POST /projects — coordinator (student self-register is conditional)
@@ -111,6 +118,9 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     // "coordinator/admin" and coordinator-only workflow actions.
     P.USER_ASSIGN_SUPERVISOR,
     P.SESSION_CREATE,
+    P.SESSION_UPDATE,
+    P.SESSION_ACTIVATE,
+    P.SESSION_CLOSE,
     P.PROJECT_CREATE,
     P.PROJECT_SCHEDULE_DEFENSE,
     P.PROJECT_COMPLETE,
@@ -128,11 +138,15 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     P.USER_UPDATE_ANY,
     P.USER_SUSPEND,
     P.USER_ASSIGN_SUPERVISOR,
-    // INSTITUTION_* permissions are intentionally NOT granted: the spec
-    // restricts institution management to "super-admin", a role the data model
-    // does not define, so they fail closed (see file header).
+    // INSTITUTION_* permissions are intentionally NOT granted to admin: the spec
+    // restricts institution management to "super-admin", a distinct system role
+    // (granted below). An institutional admin must not manage the global
+    // institution registry.
     P.DEPARTMENT_CREATE,
     P.SESSION_CREATE,
+    P.SESSION_UPDATE,
+    P.SESSION_ACTIVATE,
+    P.SESSION_CLOSE,
     P.PROJECT_CREATE,
     P.DOCUMENT_VIEW_DELETED,
     P.DOCUMENT_RESTORE,
@@ -143,6 +157,17 @@ export const ROLE_PERMISSIONS: Record<UserRole, readonly Permission[]> = {
     P.ANNOUNCEMENT_DELETE_ANY,
     P.AUDIT_READ,
     P.AUDIT_EXPORT,
+  ],
+  // The dedicated system principal for the global institution registry. It holds
+  // ONLY the institution-management permissions (the spec's "super-admin only"
+  // endpoints); it is not an institution-scoped role and carries none of the
+  // per-institution admin grants.
+  super_admin: [
+    P.INSTITUTION_LIST,
+    P.INSTITUTION_CREATE,
+    P.INSTITUTION_GET,
+    P.INSTITUTION_UPDATE,
+    P.INSTITUTION_DELETE,
   ],
 };
 
